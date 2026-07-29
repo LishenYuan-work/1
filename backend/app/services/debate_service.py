@@ -11,6 +11,7 @@
 import asyncio
 import json
 import sys
+import queue
 from pathlib import Path
 
 # 确保 src/ 在 import 路径中
@@ -69,27 +70,24 @@ async def run_debate_background(debate_id: str, db_session_factory):
             )
 
             try:
-                # 桥接：同步生成器 → 异步事件处理（逐事件处理，不批量收集）
-                def _sync_gen():
-                    return orchestrator.run_stream()
-
-                # 在线程中运行生成器，通过队列桥接
-                event_queue: asyncio.Queue = asyncio.Queue()
+                # 线程安全队列桥接同步生成器 → 异步事件处理
+                q: queue.Queue = queue.Queue()
 
                 def _run_in_thread():
                     try:
-                        for ev in _sync_gen():
-                            event_queue.put_nowait(ev)
-                        event_queue.put_nowait(None)  # 结束信号
+                        for ev in orchestrator.run_stream():
+                            q.put(ev)
+                        q.put(None)  # 结束信号
                     except Exception as e:
-                        event_queue.put_nowait({"type": "error", "message": str(e)})
-                        event_queue.put_nowait(None)
+                        q.put({"type": "error", "message": str(e)})
+                        q.put(None)
 
-                thread = asyncio.to_thread(_run_in_thread)
+                loop = asyncio.get_event_loop()
+                task = loop.run_in_executor(None, _run_in_thread)
 
                 # 逐事件异步处理
                 while True:
-                    event = await event_queue.get()
+                    event = await asyncio.get_event_loop().run_in_executor(None, q.get)
                     if event is None:
                         break
 
@@ -114,7 +112,7 @@ async def run_debate_background(debate_id: str, db_session_factory):
                         await db.commit()
                         await asyncio.sleep(1.5)
 
-                await thread  # 等待线程结束
+                await task  # 等待线程结束
 
                 # 标记完成
                 debate.status = "completed"

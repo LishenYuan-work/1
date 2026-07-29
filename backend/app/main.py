@@ -16,6 +16,17 @@ async def lifespan(app: FastAPI):
     """应用启动：初始化数据库 + 安全检查"""
     await init_db()
 
+    # 清理卡住的辩论（上次崩溃遗留的 running 状态）
+    from app.db.models import Debate
+    from sqlalchemy import update
+    from app.db.database import async_session
+    async with async_session() as db:
+        await db.execute(
+            update(Debate).where(Debate.status == "running").values(status="failed", error_message="服务器重启，辩论中断")
+        )
+        await db.commit()
+        print("[OK] 已清理卡住的辩论")
+
     # 校验 API Key
     if not settings.deepseek_api_key or settings.deepseek_api_key.startswith("sk-your"):
         print("警告: DEEPSEEK_API_KEY 未设置或为占位符，辩论功能不可用")
