@@ -25,8 +25,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def create_access_token(user_id: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+def create_access_token(user_id: str, remember_me: bool = False) -> str:
+    minutes = ACCESS_TOKEN_EXPIRE_MINUTES
+    if remember_me:
+        minutes = REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60  # 7 天
+    expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     payload = {"sub": user_id, "exp": expire, "type": "access"}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 

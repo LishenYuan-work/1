@@ -8,7 +8,7 @@ interface AuthState {
   user: UserProfile | null;
   token: string | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string, rememberMe?: boolean) => Promise<void>;
   register: (username: string, password: string, displayName?: string) => Promise<void>;
   logout: () => void;
 }
@@ -36,8 +36,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const loginFn = useCallback(async (username: string, password: string) => {
-    const res = await auth.login({ username, password });
+  const loginFn = useCallback(async (username: string, password: string, rememberMe?: boolean) => {
+    const res = await auth.login({ username, password, remember_me: rememberMe ?? false });
     localStorage.setItem("token", res.access_token);
     setToken(res.access_token);
     setUser(res.user);

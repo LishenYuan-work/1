@@ -45,7 +45,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(user)
 
-    access_token = create_access_token(user.id)
+    access_token = create_access_token(user.id, req.remember_me)
     refresh_token = create_refresh_token(user.id)
 
     return TokenResponse(
@@ -75,7 +75,7 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账户已被禁用")
 
-    access_token = create_access_token(user.id)
+    access_token = create_access_token(user.id, req.remember_me)
     refresh_token = create_refresh_token(user.id)
 
     return TokenResponse(

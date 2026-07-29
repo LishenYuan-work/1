@@ -10,6 +10,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -18,7 +19,7 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await login(username, password);
+      await login(username, password, rememberMe);
       router.push("/");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "登录失败");
@@ -43,6 +44,11 @@ export default function LoginPage() {
           className="px-3 py-2 rounded-lg border text-sm"
           style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--text)" }}
         />
+        <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: "var(--sub)" }}>
+          <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)}
+            style={{ accentColor: "var(--accent)" }} />
+          7 天内免登录
+        </label>
         {error && <p className="text-red-500 text-sm m-0">{error}</p>}
         <button type="submit" disabled={loading}
           className="py-2 rounded-lg text-white font-semibold border-0 cursor-pointer disabled:opacity-50"
