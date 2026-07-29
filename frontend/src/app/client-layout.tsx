@@ -29,7 +29,7 @@ function Navbar() {
               </Link>
               <Link href="/dashboard" className={`no-underline ${pathname === "/dashboard" ? "font-semibold" : ""}`}
                 style={{ color: pathname === "/dashboard" ? "var(--accent)" : "var(--sub)" }}>
-                <User size={16} className="inline mr-0.5" />{user.display_name || user.username}
+                <User size={16} className="inline mr-0.5" />{user.display_name || user.phone}
               </Link>
               <button onClick={logout} className="bg-transparent border-0 cursor-pointer"
                 style={{ color: "var(--sub)" }}><LogOut size={16} /></button>

@@ -12,16 +12,15 @@ class AgentConfig(BaseModel):
 
 # ========== 认证 ==========
 class RegisterRequest(BaseModel):
-    username: str = Field(..., min_length=2, max_length=50)
+    phone: str = Field(..., min_length=11, max_length=11, pattern=r"^1[3-9]\d{9}$")
     password: str = Field(..., min_length=6, max_length=128)
-    email: str | None = None
     display_name: str | None = None
 
 
 class LoginRequest(BaseModel):
-    username: str
+    phone: str = Field(..., min_length=11, max_length=11)
     password: str
-    remember_me: bool = False
+    remember_me: bool = True  # 默认 7 天免登录
 
 
 class TokenResponse(BaseModel):
@@ -37,9 +36,9 @@ class RefreshRequest(BaseModel):
 
 class UserProfile(BaseModel):
     id: str
-    username: str
+    phone: str
     display_name: str | None
-    email: str | None
+    is_guest: bool = False
     created_at: str
 
 

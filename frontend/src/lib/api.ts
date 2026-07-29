@@ -33,11 +33,13 @@ async function request<T>(
 
 // ====== Auth ======
 export const auth = {
-  register: (data: { username: string; password: string; display_name?: string }) =>
+  register: (data: { phone: string; password: string; display_name?: string }) =>
     request<AuthResponse>("POST", "/api/auth/register", data),
-  login: (data: { username: string; password: string }) =>
+  login: (data: { phone: string; password: string; remember_me?: boolean }) =>
     request<AuthResponse>("POST", "/api/auth/login", data),
+  guest: () => request<AuthResponse>("POST", "/api/auth/guest"),
   me: () => request<UserProfile>("GET", "/api/auth/me"),
+  clearGuest: () => request<void>("POST", "/api/auth/clear-guest"),
 };
 
 // ====== Debates ======
@@ -125,9 +127,9 @@ export interface AuthResponse {
 
 export interface UserProfile {
   id: string;
-  username: string;
+  phone: string;
   display_name: string | null;
-  email: string | null;
+  is_guest: boolean;
   created_at: string;
 }
 

@@ -8,7 +8,7 @@ import { useAuth } from "@/lib/auth";
 export default function RegisterPage() {
   const { register } = useAuth();
   const router = useRouter();
-  const [username, setUsername] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
@@ -16,10 +16,9 @@ export default function RegisterPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
-    setLoading(true);
+    setError(""); setLoading(true);
     try {
-      await register(username, password, displayName || undefined);
+      await register(phone, password, displayName || undefined);
       router.push("/");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "注册失败");
@@ -33,13 +32,14 @@ export default function RegisterPage() {
       <h1 className="text-xl font-bold mb-6 text-center">注册</h1>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <input
-          type="text" placeholder="用户名" value={username}
-          onChange={(e) => setUsername(e.target.value)} required minLength={2}
+          type="tel" placeholder="手机号" value={phone}
+          onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 11))}
+          required pattern="1[3-9]\d{9}" maxLength={11}
           className="px-3 py-2 rounded-lg border text-sm"
           style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--text)" }}
         />
         <input
-          type="text" placeholder="显示名称（可选）" value={displayName}
+          type="text" placeholder="昵称（可选）" value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
           className="px-3 py-2 rounded-lg border text-sm"
           style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--text)" }}
