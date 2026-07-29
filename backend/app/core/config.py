@@ -16,8 +16,8 @@ class Settings(BaseSettings):
 
     # LLM 默认参数
     default_temperature: float = 0.8
-    default_max_tokens: int = 2048
-    default_rounds: int = 3
+    default_max_tokens: int = 1024  # 更短的发言，更快生成
+    default_rounds: int = 2
 
     # 并发控制：最多同时运行多少场辩论
     max_concurrent_debates: int = 5

@@ -14,7 +14,7 @@ StreamCallback = Callable[[str, int, str], None]
 class DebateOrchestrator:
     """辩论编排器 — 管理多轮多 Agent 辩论流程"""
 
-    def __init__(self, topic: str, agents: list[DebateAgent], total_rounds: int = 3):
+    def __init__(self, topic: str, agents: list[DebateAgent], total_rounds: int = 2):
         if total_rounds < 2:
             raise ValueError("辩论至少需要 2 轮（开场 + 总结）")
         if len(agents) < 2:

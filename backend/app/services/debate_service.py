@@ -112,7 +112,7 @@ async def run_debate_background(debate_id: str, db_session_factory):
                         )
                         db.add(db_msg)
                         await db.commit()
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(1.5)
 
                 await thread  # 等待线程结束
 

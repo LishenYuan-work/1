@@ -17,7 +17,7 @@ export default function CreatePage() {
     { name: "正方", role: "正方辩手", stance: "支持" },
     { name: "反方", role: "反方辩手", stance: "反对" },
   ]);
-  const [rounds, setRounds] = useState(3);
+  const [rounds, setRounds] = useState(2);
   const [tplList, setTplList] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
   const [recommending, setRecommending] = useState(false);

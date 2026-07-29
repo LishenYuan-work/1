@@ -103,7 +103,7 @@ export default function DebatePage() {
       {/* 头部 */}
       <div className="p-3 sm:p-4 rounded-xl mb-4 sm:mb-6" style={{ background: "var(--card)", borderLeft: "4px solid var(--accent)" }}>
         <span className="text-xs" style={{ color: "var(--sub)" }}>辩论话题</span>
-        <h1 className="text-lg font-bold m-0 mt-1">{allMessages.length > 0 ? `辩论进行中` : '准备开始'}</h1>
+        <h1 className="text-lg font-bold m-0 mt-1">{state.messages.length > 0 ? `辩论进行中 (${state.messages.length} 条发言)` : '准备开始…'}</h1>
         <div className="flex items-center gap-3 mt-2 text-xs" style={{ color: "var(--sub)" }}>
           <span>{agentIndexMap.current ? Object.keys(agentIndexMap.current).length : 0} 位辩手</span><span>·</span>
           <span>{sortedRounds.length > 0 ? sortedRounds[sortedRounds.length - 1] : '?'} / {3} 轮</span><span>·</span>
