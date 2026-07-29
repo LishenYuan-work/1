@@ -88,6 +88,8 @@ async def run_debate_background(debate_id: str, db_session_factory):
                             content=event["full_text"],
                         )
                         db.add(db_msg)
+                        await db.commit()  # 立即写入，让轮询能拉到
+                        await asyncio.sleep(3)  # 停顿让观众阅读
 
                     # 广播到 SSE 管理器
                     await sse_manager.broadcast(debate_id, event_type, event)

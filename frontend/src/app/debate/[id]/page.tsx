@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { debates, type DebateDetail } from "@/lib/api";
-import { useDebateStream } from "@/lib/use-sse";
+import { debates, type DebateDetail, type MessageItem } from "@/lib/api";
 import { Send, Loader2 } from "lucide-react";
 import CommentSection from "@/components/CommentSection";
 
@@ -16,113 +15,63 @@ const ROUND_LABELS = (r: number, total: number) =>
 export default function DebatePage() {
   const { id } = useParams<{ id: string }>();
   const [debate, setDebate] = useState<DebateDetail | null>(null);
+  const [loading, setLoading] = useState(true);
   const [followQ, setFollowQ] = useState<Record<number, string>>({});
   const [followReply, setFollowReply] = useState<Record<number, string>>({});
-  const [loading, setLoading] = useState(true);
-  const [pollInterval, setPollInterval] = useState<ReturnType<typeof setInterval> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevCountRef = useRef(0);
 
-  // 建立 SSE 连接
-  const { events, connected, done, connect } = useDebateStream(id);
+  // 核心：轮询拉取新消息（每 2 秒）
+  const poll = useCallback(async () => {
+    try {
+      const d = await debates.get(id);
+      setDebate((prev) => {
+        // 有新消息或状态变化才更新
+        if (!prev || d.messages.length !== prev.messages.length || d.status !== prev.status) {
+          return d;
+        }
+        return prev;
+      });
+      // 辩论结束，停止轮询
+      if (d.status === "completed" || d.status === "failed") {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      }
+    } catch {
+      // 网络错误，继续重试
+    }
+  }, [id]);
 
-  // 页面加载：获取辩论信息
   useEffect(() => {
+    // 首次加载
     debates.get(id).then((d) => {
       setDebate(d);
       setLoading(false);
+      prevCountRef.current = d.messages.length;
 
-      // 如果辩论还在运行中，连接 SSE
-      if (d.status === "pending" || d.status === "running") {
-        connect();
+      // 如果未完成，开始轮询
+      if (d.status !== "completed" && d.status !== "failed") {
+        pollRef.current = setInterval(poll, 2000);
       }
     }).catch(() => setLoading(false));
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [id]);
 
-  // 如果辩论运行中但 SSE 断开了，定时刷新以获取完成状态
-  useEffect(() => {
-    if (connected || !debate || debate.status === "completed" || debate.status === "failed") return;
-    if (done) {
-      // SSE 报告完成，刷新页面数据
-      debates.get(id).then(setDebate);
-      return;
-    }
-
-    // 轮询兜底：每 5 秒检查一次
-    const t = setInterval(() => {
-      debates.get(id).then((d) => {
-        setDebate(d);
-        if (d.status === "completed" || d.status === "failed") {
-          clearInterval(t);
-        }
-      });
-    }, 5000);
-    setPollInterval(t);
-    return () => clearInterval(t);
-  }, [connected, done, debate?.status]);
-
-  // SSE 事件处理完毕
-  useEffect(() => {
-    if (done) {
-      // 刷新拿到完整数据
-      debates.get(id).then(setDebate);
-      if (pollInterval) clearInterval(pollInterval);
-    }
-  }, [done]);
-
-  // 构建 Agent 颜色索引
   const agentIndexMap = useRef<Record<string, number>>({});
   if (debate) {
     debate.agents.forEach((a, i) => { agentIndexMap.current[a.name] = i; });
   }
-  // 为 SSE 中新出现的 agent 分配索引
-  for (const ev of events) {
-    if ((ev.type === "agent_start" || ev.type === "chunk" || ev.type === "agent_end") && !(ev.agent in agentIndexMap.current)) {
-      agentIndexMap.current[ev.agent] = Object.keys(agentIndexMap.current).length;
-    }
-  }
 
-  // 合并消息：已有消息 + SSE 实时流
-  const allMessages = useMemo(() => {
-    const existing = debate?.messages || [];
-    const result = [...existing];
+  const messages = debate?.messages || [];
+  const isRunning = debate?.status === "running" || debate?.status === "pending";
+  const isDone = debate?.status === "completed" || debate?.status === "failed";
 
-    // 从 SSE 事件中提取正在流式输入的发言
-    const streamingContent: Record<string, { round: number; text: string; done: boolean }> = {};
-
-    for (const ev of events) {
-      if (ev.type === "agent_start") {
-        if (!streamingContent[ev.agent]) {
-          streamingContent[ev.agent] = { round: ev.round, text: "", done: false };
-        }
-      }
-      if (ev.type === "chunk") {
-        if (!streamingContent[ev.agent]) {
-          streamingContent[ev.agent] = { round: ev.round, text: "", done: false };
-        }
-        streamingContent[ev.agent].text += ev.text;
-      }
-      if (ev.type === "agent_end") {
-        if (!streamingContent[ev.agent]) {
-          streamingContent[ev.agent] = { round: ev.round, text: "", done: false };
-        }
-        streamingContent[ev.agent].text = ev.full_text;
-        streamingContent[ev.agent].done = true;
-      }
-    }
-
-    // 把流式内容追加到消息列表（如果消息列表里还没有这个发言）
-    for (const [agent, info] of Object.entries(streamingContent)) {
-      if (info.text && !existing.some((m) => m.agent_name === agent && m.round_num === info.round)) {
-        result.push({
-          agent_name: agent,
-          content: info.text,
-          round_num: info.round,
-          streaming: !info.done,
-        } as any);
-      }
-    }
-
-    return result;
-  }, [debate?.messages, events]);
+  // 按轮次分组
+  const rounds = new Set<number>();
+  for (const m of messages) rounds.add(m.round_num);
+  const sortedRounds = Array.from(rounds).sort((a, b) => a - b);
 
   async function handleFollowup(msgIdx: number) {
     const q = followQ[msgIdx];
@@ -143,16 +92,6 @@ export default function DebatePage() {
     return <div className="text-center py-20" style={{ color: "var(--sub)" }}>辩论不存在</div>;
   }
 
-  // 按轮次分组
-  const rounds = new Set<number>();
-  for (const m of allMessages) rounds.add(m.round_num);
-  for (const ev of events) {
-    if (ev.type === "round_start") rounds.add(ev.round);
-  }
-  const sortedRounds = Array.from(rounds).sort((a, b) => a - b);
-
-  const isLive = debate.status === "running" || debate.status === "pending";
-
   return (
     <div className="w-full max-w-4xl mx-auto px-0 sm:px-1">
       {/* 头部 */}
@@ -162,34 +101,35 @@ export default function DebatePage() {
         <div className="flex items-center gap-3 mt-2 text-xs" style={{ color: "var(--sub)" }}>
           <span>{debate.agents.length} 位辩手</span><span>·</span><span>{debate.rounds} 轮</span><span>·</span>
           <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full"
-              style={{ background: connected ? "#10b981" : isLive ? "#f59e0b" : done || debate.status === "completed" ? "var(--accent)" : "var(--sub)" }} />
-            {connected ? "直播中" : isLive ? "等待中…" : done || debate.status === "completed" ? "已完成" : debate.status === "failed" ? "失败" : debate.status}
+            <span className="w-2 h-2 rounded-full animate-pulse"
+              style={{ background: isRunning ? "#10b981" : isDone ? "var(--accent)" : "var(--sub)" }} />
+            {isRunning ? `辩论中 (${messages.length} 条发言)` : isDone ? `已完成 (${messages.length} 条发言)` : debate.status}
           </span>
         </div>
       </div>
 
-      {/* 消息流 */}
-      {sortedRounds.length === 0 && isLive && (
+      {/* 空状态 */}
+      {messages.length === 0 && isRunning && (
         <div className="text-center py-16" style={{ color: "var(--sub)" }}>
           <Loader2 className="animate-spin mx-auto mb-3" size={36} />
           <p className="font-semibold">AI 辩手准备中…</p>
-          <p className="text-xs mt-1">辩论即将开始，请稍候</p>
+          <p className="text-xs mt-1">辩论即将开始，新发言会自动出现</p>
         </div>
       )}
 
+      {/* 消息流 */}
       {sortedRounds.map((r) => {
-        const roundMsgs = allMessages.filter((m: any) => m.round_num === r);
+        const roundMsgs = messages.filter((m) => m.round_num === r);
         return (
           <div key={r}>
             <div className="text-center py-4 text-xs font-bold tracking-wider" style={{ color: "var(--accent)" }}>
               ━━ 第 {r}/{debate.rounds} 轮 · {ROUND_LABELS(r, debate.rounds)} ━━
             </div>
-            {roundMsgs.map((msg: any, mi: number) => {
+            {roundMsgs.map((msg: MessageItem, mi: number) => {
               const idx = agentIndexMap.current[msg.agent_name] || 0;
               const cl = AGENT_COLORS[idx % 6];
               const em = AGENT_EMOJIS[idx % 6];
-              const globalIdx = allMessages.indexOf(msg);
+              const globalIdx = messages.indexOf(msg);
 
               return (
                 <div key={`${r}-${mi}`} className="flex gap-2 sm:gap-3 py-2.5 sm:py-3" style={{ borderBottom: "1px solid var(--border)" }}>
@@ -200,11 +140,10 @@ export default function DebatePage() {
                       <span className="font-bold text-xs sm:text-sm" style={{ color: cl }}>{msg.agent_name}</span>
                       <span className="text-[10px] sm:text-xs px-1.5 py-0.5 rounded-md"
                         style={{ color: "var(--sub)", background: "var(--bg)" }}>第{r}轮</span>
-                      {msg.streaming && <span className="text-[10px] sm:text-xs animate-pulse" style={{ color: "var(--accent)" }}>输入中…</span>}
                     </div>
                     <div className="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.content}</div>
 
-                    {!msg.streaming && !isLive && (
+                    {isDone && (
                       <div className="mt-2">
                         <button onClick={() => {
                           const newState = { ...followQ };
@@ -243,8 +182,7 @@ export default function DebatePage() {
         );
       })}
 
-      {/* 评论区 */}
-      <CommentSection debateId={id} done={done || debate.status === "completed"} />
+      <CommentSection debateId={id} done={isDone} />
     </div>
   );
 }
