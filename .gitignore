@@ -1,0 +1,34 @@
+# 环境变量（包含 API Key，绝对不能提交）
+.env
+.env.local
+.env.prod
+!.env.example
+!.env.prod
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.db
+
+# Next.js
+frontend/.next/
+frontend/.env.local
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
