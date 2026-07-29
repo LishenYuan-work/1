@@ -1,145 +1,126 @@
-# 🎤 多Agent辩论式团队
+# 🎤 多Agent辩论室
 
-基于 **DeepSeek API** 的多 Agent 协作辩论系统。多个 AI Agent 扮演不同角色，围绕任意话题展开多轮深度辩论。
+> 多个 AI Agent 扮演不同角色，围绕任意话题展开多轮深度辩论。支持实时流式观看、追问辩手、评论互动。
+
+**在线体验：** [https://1-peach-theta.vercel.app](https://1-peach-theta.vercel.app)
 
 ## ✨ 特性
 
-- 🎭 **多角色辩论** — 支持 2-N 个 Agent，每个 Agent 有独立角色和立场
-- 📋 **4套预设模板** — 正反辩论 / 多视角分析 / 决策论证 / 学术讨论，开箱即用
-- 🤖 **AI 角色推荐** — 输入话题，AI 自动推荐最适合的辩论角色
-- 🔄 **多轮辩论** — 可配置辩论轮次（开场陈述 → 自由辩论 → 总结陈词）
-- 🖥️ **双界面** — CLI（终端流式输出）+ Web UI（Streamlit 浏览器界面）
-- ⚡ **流式输出** — 实时看到 Agent 逐字生成发言，体验流畅
-- 🔌 **DeepSeek API** — 使用 OpenAI 兼容接口，轻松替换为其他模型
+- 🎭 **多角色辩论** — 2~8 个 AI Agent，各自拥有独立立场和人格
+- 📋 **4 套预设模板** — 正反辩论 / 多视角分析 / 决策论证 / 学术讨论
+- 🤖 **AI 角色推荐** — 输入话题，AI 自动推荐最适合的辩论阵容
+- ⚡ **实时流式** — SSE 逐字推送，看到 AI 实时打字发言
+- 💬 **追问 & 评论** — 辩论结束后追问任意辩手，围观用户可评论互动
+- 🔐 **用户系统** — JWT 注册/登录，个人辩论历史
+- 🌐 **公网部署** — 一键部署到 Vercel + Render + Supabase，完全免费
 
-## 🚀 快速开始
+## 🏗️ 架构
 
-### 1. 安装依赖
+```
+用户浏览器 (Next.js)
+       │
+       ├── REST API (JSON) ──→ FastAPI 后端
+       ├── SSE 流式 ──────────→ FastAPI 辩论引擎
+       │                            │
+       │                    ┌───────┴───────┐
+       │                    │  DeepSeek API │
+       │                    └───────────────┘
+       │
+       └── 数据持久化 ──→ PostgreSQL (Supabase / Render)
+```
+
+| 层 | 技术 | 部署 |
+|---|------|------|
+| 前端 | Next.js 16 + TypeScript + Tailwind CSS | Vercel |
+| 后端 | FastAPI + SQLAlchemy async | Render |
+| 数据库 | PostgreSQL | Supabase / Render |
+| AI | DeepSeek API (OpenAI 兼容) | - |
+| 实时 | Server-Sent Events | - |
+
+## 🚀 本地运行
+
+### 环境要求
+
+- Python 3.12+
+- Node.js 20+
+- DeepSeek API Key（[获取地址](https://platform.deepseek.com/api_keys)）
+
+### 1. 克隆仓库
 
 ```bash
+git clone https://github.com/lishenyuan001/-1.git
+cd -1
+```
+
+### 2. 启动后端
+
+```bash
+cd backend
+cp .env.example .env
+# 编辑 .env，填入你的 DEEPSEEK_API_KEY
 pip install -r requirements.txt
+python -m uvicorn app.main:app --port 8000
 ```
 
-### 2. 配置 API Key
+### 3. 启动前端
 
 ```bash
-# 复制配置模板
-copy .env.example .env    # Windows
-cp .env.example .env      # Mac/Linux
-
-# 编辑 .env，填入你的 DeepSeek API Key
-# 获取 Key: https://platform.deepseek.com/api_keys
+cd frontend
+cp .env.example .env.local
+npm install
+npm run dev
 ```
 
-### 3. 运行
+### 4. 打开浏览器
 
-**CLI 模式（终端）：**
+访问 http://localhost:3000
+
+## 🔧 .env 配置说明
+
+后端 `backend/.env`：
 
 ```bash
-# 使用预设模板
-python cli.py debate "AI是否应该被严格监管" --preset 正反辩论 --rounds 3
-
-# 自定义角色
-python cli.py debate "远程办公的利弊" --roles 支持者,反对者,企业管理者 --rounds 2
-
-# AI 自动推荐角色
-python cli.py debate "全球变暖应对方案" --ai-roles
-
-# 单独使用 AI 推荐
-python cli.py recommend "是否应该全面禁止塑料"
+DEEPSEEK_API_KEY=sk-your-key-here    # 必填
+DATABASE_URL=sqlite+aiosqlite:///./debate.db  # 本地 SQLite，生产用 PostgreSQL
+JWT_SECRET=your-random-secret        # 生产环境务必更换
+DEBUG=true
 ```
 
-**Web UI 模式（浏览器）：**
+前端 `frontend/.env.local`：
 
 ```bash
-streamlit run webui.py
+NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
-
-然后浏览器打开 `http://localhost:8501`
 
 ## 📁 项目结构
 
 ```
-debate-agents/
-├── cli.py                  # CLI 入口（Click + Rich）
-├── webui.py                # Streamlit Web UI
-├── src/
-│   ├── config.py           # 配置管理（环境变量）
-│   ├── llm_client.py       # DeepSeek API 封装
-│   ├── agent.py            # Agent 数据模型
-│   ├── prompts.py          # Prompt 模板
-│   ├── roles.py            # 角色系统（预设 + AI推荐）
-│   └── orchestrator.py     # 辩论编排器（核心）
-├── requirements.txt
-├── .env.example
-└── README.md
+├── frontend/                  # Next.js 前端
+│   ├── src/
+│   │   ├── app/               # 页面路由
+│   │   ├── components/        # React 组件
+│   │   └── lib/               # API 客户端、Auth、SSE Hook
+├── backend/                   # FastAPI 后端
+│   ├── app/
+│   │   ├── routers/           # API 路由 (auth/debates/comments/templates)
+│   │   ├── services/          # 业务逻辑（辩论编排）
+│   │   ├── core/              # 配置、安全、限流、SSE 管理
+│   │   └── db/                # 数据库模型
+│   └── src/                   # 原有辩论引擎
+│       ├── orchestrator.py    # 核心调度器
+│       ├── roles.py           # 角色系统
+│       └── prompts.py         # Prompt 模板
+└── supabase/
+    └── migrations/            # 数据库迁移 SQL
 ```
 
-## 🏗️ 架构设计
+## 🌍 一键部署（免费）
 
-```
-用户输入（话题 + 角色 + 轮次）
-         │
-         ▼
-   DebateOrchestrator（编排器）
-         │
-         ├── Round 1: 开场陈述 ── 每个 Agent 依次发言
-         ├── Round 2~N-1: 自由辩论 ── Agent 看到历史后反驳
-         └── Round N: 总结陈词 ── 最终立场申明
-         │
-         ▼
-   完整辩论记录（DebateRecord）
-```
-
-核心设计要点：
-- **顺序发言**：每个 Agent 发言时可看到之前所有人的发言，辩论逻辑合理
-- **System Prompt 区分角色**：所有 Agent 共用 DeepSeek Chat 模型，通过不同的 System Prompt 赋予不同人格
-- **流式回调**：Orchestrator 通过 Generator 逐 token 输出，CLI 和 Web 复用同一套流式接口
-- **无框架依赖**：不引入 LangChain/CrewAI，从零手写编排器，利于理解 Agent 协作原理
-
-## 🔧 预设辩论模板
-
-| 模板名称 | 角色 | 适用场景 |
-|---------|------|---------|
-| 正反辩论 | 正方辩手 + 反方辩手 + 中立裁判 | 二元对立话题 |
-| 多视角分析 | 经济学家 + 社会学家 + 技术专家 + 伦理学家 | 复杂社会议题 |
-| 决策论证 | 乐观派 + 悲观派 + 务实派 + 创新派 | 决策评估 |
-| 学术讨论 | 理论派 + 实证派 + 批判派 + 综合派 | 学术话题探讨 |
-
-## 📝 示例
-
-```bash
-$ python cli.py debate "是否应该全面禁止塑料制品" --preset 多视角分析 --rounds 3
-
-🎤 辩论开始
-辩论话题: 是否应该全面禁止塑料制品
-
-👥 辩论角色 (预设模板: 多视角分析)
-┌────────────┬──────────────────────────┐
-│ 角色       │ 立场                     │
-├────────────┼──────────────────────────┤
-│ 经济学家   │ 从经济效率和成本收益分析 │
-│ 社会学家   │ 从社会公平和群体影响分析 │
-│ 技术专家   │ 从技术可行性和创新分析   │
-│ 伦理学家   │ 从伦理道德和人文关怀分析 │
-└────────────┴──────────────────────────┘
-
-━━━━━━━━━━━━ 第 1/3 轮 ━━━━━━━━━━━━
-
-📣 经济学家: 从经济角度看，全面禁止塑料制品...
-📣 社会学家: 塑料污染对低收入社区影响最大...
-📣 技术专家: 目前生物降解塑料技术已趋成熟...
-📣 伦理学家: 我们有道德责任为后代保护环境...
-
-━━━━━━━━━━━━ 第 2/3 轮 ━━━━━━━━━━━━
-...
-```
-
-## 🛠️ 技术要求
-
-- Python 3.11+
-- DeepSeek API Key（[获取地址](https://platform.deepseek.com/api_keys)）
-- 网络连接
+| 步骤 | 平台 | 说明 |
+|------|------|------|
+| 1 | [Render](https://render.com) | 创建 PostgreSQL + Web Service，部署 `backend/` |
+| 2 | [Vercel](https://vercel.com) | 部署 `frontend/`，设置 `NEXT_PUBLIC_API_URL` |
+| 3 | 设置环境变量 | `DATABASE_URL`、`DEEPSEEK_API_KEY`、`JWT_SECRET` |
 
 ## 📄 License
 
