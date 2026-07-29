@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
-from app.db.models import User
+from app.db.models import Profile
 from app.dependencies import require_user
 from app.models.schemas import (
     RegisterRequest,
@@ -31,11 +31,11 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """注册新用户"""
     # 检查用户名是否已存在
-    existing = await db.execute(select(User).where(User.username == req.username))
+    existing = await db.execute(select(Profile).where(Profile.username == req.username))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="用户名已存在")
 
-    user = User(
+    user = Profile(
         username=req.username,
         password_hash=hash_password(req.password),
         email=req.email,
@@ -66,7 +66,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     """用户名 + 密码登录"""
-    result = await db.execute(select(User).where(User.username == req.username))
+    result = await db.execute(select(Profile).where(Profile.username == req.username))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(req.password, user.password_hash):
@@ -100,7 +100,7 @@ async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db))
     if not user_id:
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
 
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(Profile).where(Profile.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
@@ -121,7 +121,7 @@ async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db))
 # ========== 当前用户 ==========
 
 @router.get("/me", response_model=UserProfile)
-async def get_me(user: User = Depends(require_user)):
+async def get_me(user: Profile = Depends(require_user)):
     """获取当前登录用户信息"""
     return UserProfile(
         id=user.id,

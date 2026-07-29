@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.database import get_db
-from app.db.models import Comment, User, Debate
+from app.db.models import Comment, Profile, Debate
 from app.dependencies import get_current_user, require_user
 from app.models.schemas import CreateCommentRequest, CommentItem
 
@@ -45,7 +45,7 @@ async def create_comment(
     debate_id: str,
     req: CreateCommentRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_user),
+    user: Profile = Depends(require_user),
 ):
     """发表评论"""
     # 验证辩论存在
@@ -125,7 +125,7 @@ async def delete_comment(
     debate_id: str,
     comment_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_user),
+    user: Profile = Depends(require_user),
 ):
     """删除评论（仅作者可删）"""
     result = await db.execute(select(Comment).where(Comment.id == comment_id))

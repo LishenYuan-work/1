@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.database import get_db, async_session
-from app.db.models import Debate, DebateMessage as DebateMessageModel, User
+from app.db.models import Debate, DebateMessage as DebateMessageModel, Profile
 from app.dependencies import get_current_user, require_user
 from app.models.schemas import (
     CreateDebateRequest,
@@ -79,7 +79,7 @@ async def create_debate(
     req: CreateDebateRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user: User | None = Depends(get_current_user),
+    user: Profile | None = Depends(get_current_user),
 ):
     """创建新辩论并立即启动后台执行（登录可选）"""
     debate = Debate(
@@ -135,7 +135,7 @@ async def list_my_debates(
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_user),
+    user: Profile = Depends(require_user),
 ):
     """获取当前用户的辩论列表"""
     query = (
@@ -187,7 +187,7 @@ async def get_debate_messages(debate_id: str, db: AsyncSession = Depends(get_db)
 async def delete_debate(
     debate_id: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_user),
+    user: Profile = Depends(require_user),
 ):
     """删除辩论（仅创建者可删）"""
     result = await db.execute(select(Debate).where(Debate.id == debate_id))

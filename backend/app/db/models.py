@@ -11,30 +11,9 @@ class Base(DeclarativeBase):
     pass
 
 
-# ========== 评论表 ==========
-class Comment(Base):
-    __tablename__ = "comments"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    debate_id: Mapped[str] = mapped_column(String(36), ForeignKey("debates.id", ondelete="CASCADE"), nullable=False)
-    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    parent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("comments.id", ondelete="CASCADE"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-    # 关联
-    user: Mapped["User | None"] = relationship("User")
-    parent: Mapped["Comment | None"] = relationship(
-        "Comment", back_populates="replies", remote_side="Comment.id"
-    )
-    replies: Mapped[list["Comment"]] = relationship(
-        "Comment", back_populates="parent", cascade="all, delete-orphan"
-    )
-
-
-# ========== 用户表 ==========
-class User(Base):
-    __tablename__ = "users"
+# ========== 用户资料表 ==========
+class Profile(Base):
+    __tablename__ = "profiles"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex[:12])
     username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
@@ -53,7 +32,7 @@ class Debate(Base):
     __tablename__ = "debates"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex[:12])
-    creator_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    creator_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("profiles.id", ondelete="SET NULL"), nullable=True)
     topic: Mapped[str] = mapped_column(Text, nullable=False)
     rounds: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=3)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
@@ -66,7 +45,7 @@ class Debate(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # 关联
-    creator: Mapped["User | None"] = relationship("User", back_populates="debates")
+    creator: Mapped["Profile | None"] = relationship("Profile", back_populates="debates")
     messages: Mapped[list["DebateMessage"]] = relationship(
         "DebateMessage", back_populates="debate", cascade="all, delete-orphan",
         order_by="DebateMessage.round_num, DebateMessage.created_at"
@@ -85,3 +64,24 @@ class DebateMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     debate: Mapped["Debate"] = relationship("Debate", back_populates="messages")
+
+
+# ========== 评论表 ==========
+class Comment(Base):
+    __tablename__ = "comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    debate_id: Mapped[str] = mapped_column(String(36), ForeignKey("debates.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("profiles.id", ondelete="SET NULL"), nullable=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("comments.id", ondelete="CASCADE"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    # 关联
+    user: Mapped["Profile | None"] = relationship("Profile")
+    parent: Mapped["Comment | None"] = relationship(
+        "Comment", back_populates="replies", remote_side="Comment.id"
+    )
+    replies: Mapped[list["Comment"]] = relationship(
+        "Comment", back_populates="parent", cascade="all, delete-orphan"
+    )
