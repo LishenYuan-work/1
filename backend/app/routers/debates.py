@@ -200,7 +200,35 @@ async def delete_debate(
     await db.commit()
 
 
-# ========== SSE 流式端点（核心！）==========
+# ========== 轻量轮询端点（替代 SSE，穿透所有代理）==========
+
+@router.get("/{debate_id}/live")
+async def live_debate(debate_id: str, db: AsyncSession = Depends(get_db)):
+    """轻量轮询端点：返回完整消息 + 当前正在输入中的文字"""
+    result = await db.execute(
+        select(Debate).options(selectinload(Debate.messages), selectinload(Debate.creator))
+        .where(Debate.id == debate_id)
+    )
+    debate = result.unique().scalar_one_or_none()
+    if not debate:
+        raise HTTPException(404, "辩论不存在")
+
+    messages = [
+        MessageItem(agent_name=m.agent_name, content=m.content, round_num=m.round_num)
+        for m in (debate.messages or [])
+    ]
+
+    # 当前正在流式输入的文字（逐字更新）
+    streaming = sse_manager.get_streaming_state(debate_id)
+
+    return {
+        "status": debate.status,
+        "messages": messages,
+        "streaming": streaming,  # {"agent_name": "...", "round_num": 1, "text": "..."} or None
+    }
+
+
+# ========== SSE 流式端点 ==========
 
 @router.get("/{debate_id}/stream")
 async def stream_debate(debate_id: str, db: AsyncSession = Depends(get_db)):

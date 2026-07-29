@@ -57,6 +57,7 @@ export const debates = {
   followup: (id: string, data: { message_index: number; question: string }) =>
     request<{ reply: string; agent: string }>("POST", `/api/debates/${id}/followup`, data),
   streamUrl: (id: string) => `${BASE}/api/debates/${id}/stream`,
+  live: (id: string) => request<LiveState>("GET", `/api/debates/${id}/live`),
 };
 
 // ====== Comments ======
@@ -147,6 +148,12 @@ export interface Template {
 }
 
 /** SSE 事件类型 */
+export interface LiveState {
+  status: string;
+  messages: MessageItem[];
+  streaming: { agent_name: string; round_num: number; text: string } | null;
+}
+
 export type SSEEvent =
   | { type: "round_start"; round: number; total: number }
   | { type: "agent_start"; agent: string; round: number }

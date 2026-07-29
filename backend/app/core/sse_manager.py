@@ -22,6 +22,8 @@ class SSEManager:
         self._event_log: dict[str, list[str]] = defaultdict(list)
         # debate_id -> bool (是否已完成)
         self._completed: dict[str, bool] = {}
+        # 流式状态：debate_id -> {agent_name: current_text, round_num, agent_name}
+        self._streaming: dict[str, dict] = {}
 
     async def subscribe(self, debate_id: str) -> asyncio.Queue:
         """客户端订阅某个辩论的 SSE 流，返回专属队列"""
@@ -65,8 +67,27 @@ class SSEManager:
         for q in dead_queues:
             self.unsubscribe(debate_id, q)
 
+        # 更新流式状态
+        if event_type == "agent_start":
+            self._streaming[debate_id] = {
+                "agent_name": data.get("agent", ""),
+                "round_num": data.get("round", 1),
+                "text": "",
+            }
+        elif event_type == "chunk":
+            if debate_id in self._streaming:
+                self._streaming[debate_id]["text"] += data.get("text", "")
+        elif event_type == "agent_end":
+            if debate_id in self._streaming:
+                self._streaming[debate_id]["text"] = data.get("full_text", "")
+
         if event_type == "done":
             self._completed[debate_id] = True
+            self._streaming.pop(debate_id, None)
+
+    def get_streaming_state(self, debate_id: str) -> dict | None:
+        """获取某个辩论当前正在输入的文字（供轮询端点使用）"""
+        return self._streaming.get(debate_id)
 
     @staticmethod
     def _format_sse(event_type: str, data: dict) -> str:

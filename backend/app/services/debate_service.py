@@ -69,15 +69,38 @@ async def run_debate_background(debate_id: str, db_session_factory):
             )
 
             try:
-                # 在后台线程中运行同步生成器
-                events = await asyncio.to_thread(lambda: list(orchestrator.run_stream()))
+                # 桥接：同步生成器 → 异步事件处理（逐事件处理，不批量收集）
+                def _sync_gen():
+                    return orchestrator.run_stream()
 
-                for event in events:
+                # 在线程中运行生成器，通过队列桥接
+                event_queue: asyncio.Queue = asyncio.Queue()
+
+                def _run_in_thread():
+                    try:
+                        for ev in _sync_gen():
+                            event_queue.put_nowait(ev)
+                        event_queue.put_nowait(None)  # 结束信号
+                    except Exception as e:
+                        event_queue.put_nowait({"type": "error", "message": str(e)})
+                        event_queue.put_nowait(None)
+
+                thread = asyncio.to_thread(_run_in_thread)
+
+                # 逐事件异步处理
+                while True:
+                    event = await event_queue.get()
+                    if event is None:
+                        break
+
                     event_type = event["type"]
 
                     # done 事件中的 DebateRecord 需要转为 dict
                     if event_type == "done" and "record" in event:
                         event = {**event, "record": event["record"].to_dict()}
+
+                    # 先广播到 SSE 管理器（更新流式状态 + 推送 SSE）
+                    await sse_manager.broadcast(debate_id, event_type, event)
 
                     if event_type == "agent_end":
                         # 保存发言到数据库
@@ -88,11 +111,10 @@ async def run_debate_background(debate_id: str, db_session_factory):
                             content=event["full_text"],
                         )
                         db.add(db_msg)
-                        await db.commit()  # 立即写入，让轮询能拉到
-                        await asyncio.sleep(3)  # 停顿让观众阅读
+                        await db.commit()
+                        await asyncio.sleep(3)
 
-                    # 广播到 SSE 管理器
-                    await sse_manager.broadcast(debate_id, event_type, event)
+                await thread  # 等待线程结束
 
                 # 标记完成
                 debate.status = "completed"
