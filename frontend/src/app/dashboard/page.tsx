@@ -51,7 +51,7 @@ export default function DashboardPage() {
       ) : (
         <div className="grid gap-3">
           {list.map((d) => (
-            <Link key={d.id} href={`/debate?id=${d.id}`} className="no-underline"
+            <Link key={d.id} href={`/debate/${d.id}`} className="no-underline"
               style={{ color: "var(--text)" }}>
               <div className="p-4 rounded-xl border transition-shadow hover:shadow-md"
                 style={{ background: "var(--card)", borderColor: "var(--border)" }}>

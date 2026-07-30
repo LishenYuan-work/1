@@ -1,7 +1,6 @@
 /** API 客户端 — 封装对后端的所有请求 */
 
-// 空字符串 = 同域部署，自动使用当前域名
-const BASE = process.env.NEXT_PUBLIC_API_URL || "";
+const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;

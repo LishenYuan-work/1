@@ -65,7 +65,7 @@ export default function CreatePage() {
     setError("");
     try {
       const d = await debates.create({ topic: topic.trim(), agents, rounds, visibility: "public" });
-      router.push(`/debate?id=${d.id}`);
+      router.push(`/debate/${d.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "创建失败");
     } finally {
