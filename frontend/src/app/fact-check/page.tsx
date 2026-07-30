@@ -1,20 +1,49 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
-import { Loader2, Search, ShieldAlert, ShieldCheck } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Loader2, Search, ShieldCheck, Upload, FileText } from "lucide-react";
 
 const AGENT_COLORS = ["#6366f1", "#f59e0b", "#10b981", "#ec4899", "#8b5cf6", "#06b6d4"];
 const AGENT_EMOJIS = ["🔍", "🧠", "⏰", "📊", "🤖", "🔎"];
 const SAMPLE_TEXT = `人工智能技术近年来发展迅速。据统计，2024年全球AI市场规模已超过5000亿美元，预计到2030年将突破10万亿美元。专家指出，AI将在未来十年内替代50%的人类工作岗位。然而，AI的发展也带来了伦理和安全方面的挑战。一方面，AI可以帮助人类解决复杂问题；另一方面，AI也可能被滥用造成危害。综上所述，我们需要在鼓励创新和加强监管之间找到平衡。`;
 
 export default function FactCheckPage() {
-  const router = useRouter();
   const [text, setText] = useState("");
   const [debateId, setDebateId] = useState<string | null>(null);
   const [state, setState] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState("");
+  const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState("");
+
+  // 文件上传
+  const handleFile = useCallback(async (file: File) => {
+    if (!file.name.match(/\.(pdf|docx|txt|md|csv)$/i)) {
+      setError("不支持的文件格式，支持 PDF、Word、TXT、MD"); return;
+    }
+    setUploading(true); setError(""); setUploadedFile("");
+    try {
+      const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const form = new FormData();
+      form.append("file", file);
+      const r = await fetch(`${BASE}/api/fact-check/upload`, { method: "POST", body: form });
+      const data = await r.json();
+      if (!r.ok) { setError(data.detail || "上传失败"); return; }
+      setText(data.text);
+      setUploadedFile(`${data.filename} (${data.length} 字${data.truncated ? "，已截断" : ""})`);
+    } catch {
+      setError("上传失败，请检查网络");
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  }, [handleFile]);
 
   // 轮询核查进度
   useEffect(() => {
@@ -101,14 +130,44 @@ export default function FactCheckPage() {
         文本事实核查
       </h1>
       <p className="text-sm mb-6" style={{ color: "var(--sub)" }}>
-        6 位 AI 审查员从事实、逻辑、时间、数据、AI 痕迹等维度分析文本，交叉辩论后由裁判给出最终报告
+        6 位 AI 审查员从事实、逻辑、时间、数据、AI 痕迹等维度分析文本，交叉辩论后由裁判给出最终报告。<br />
+        支持粘贴文本或上传 Word / PDF 文件自动提取文字。
       </p>
 
       {/* 输入区 */}
       {!debateId && (
         <div className="mb-6">
+          {/* 文件上传 */}
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            className={`p-3 rounded-lg border-2 border-dashed text-center cursor-pointer mb-3 transition-colors ${dragOver ? "opacity-80" : ""}`}
+            style={{ borderColor: dragOver ? "var(--accent)" : "var(--border)", background: dragOver ? "var(--bg)" : "var(--card)" }}
+            onClick={() => document.getElementById("file-input")?.click()}
+          >
+            <input id="file-input" type="file" accept=".pdf,.docx,.txt,.md,.csv"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+              className="hidden" />
+            {uploading ? (
+              <div className="flex items-center justify-center gap-2 text-sm" style={{ color: "var(--sub)" }}>
+                <Loader2 size={16} className="animate-spin" /> 解析文件中…
+              </div>
+            ) : uploadedFile ? (
+              <div className="flex items-center justify-center gap-2 text-sm" style={{ color: "#10b981" }}>
+                <FileText size={16} /> {uploadedFile}
+              </div>
+            ) : (
+              <div style={{ color: "var(--sub)" }}>
+                <Upload size={20} className="mx-auto mb-1 opacity-50" />
+                <p className="text-sm m-0">上传 Word / PDF 文件自动提取文字</p>
+                <p className="text-xs mt-0.5 opacity-60">或直接在下方粘贴文本</p>
+              </div>
+            )}
+          </div>
+
           <textarea value={text} onChange={(e) => setText(e.target.value)}
-            placeholder="粘贴需要核查的文本（至少 50 字）…"
+            placeholder="粘贴需要核查的文本，或上传文件自动填充（至少 50 字）…"
             rows={8}
             className="w-full p-3 rounded-lg border text-sm resize-y"
             style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--text)" }} />
