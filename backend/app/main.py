@@ -1,9 +1,12 @@
 """FastAPI 主入口"""
 
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from app.core.config import settings
 from app.core.rate_limit import rate_limit_middleware
@@ -80,3 +83,28 @@ async def health():
         "service": settings.app_name,
         "debates_running": debate_limit.running_count,
     }
+
+
+# ====== 前端静态文件托管（catch-all 路由，不影响 API）======
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "out")
+
+if os.path.exists(FRONTEND_DIR):
+    # 静态资源（JS/CSS）
+    _static_dir = os.path.join(FRONTEND_DIR, "_next")
+    if os.path.exists(_static_dir):
+        app.mount("/_next", StaticFiles(directory=_static_dir), name="next_static")
+
+    @app.get("/")
+    async def serve_index():
+        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+
+    @app.get("/{page:path}")
+    async def serve_page(page: str):
+        if page.startswith("api/"):
+            raise HTTPException(404)
+        clean = page.split("?")[0].rstrip("/") or "index"
+        filepath = os.path.join(FRONTEND_DIR, f"{clean}.html")
+        if os.path.exists(filepath):
+            return FileResponse(filepath)
+        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+

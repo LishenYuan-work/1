@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { debates, type LiveState, type MessageItem } from "@/lib/api";
 import { Send, Loader2 } from "lucide-react";
 import CommentSection from "@/components/CommentSection";
@@ -11,8 +12,9 @@ const AGENT_EMOJIS = ["🎓", "⚖️", "🔬", "💡", "🌍", "🔍"];
 const ROUND_LABELS = (r: number, total: number) =>
   r === 1 ? "开场陈述" : r === total ? "总结陈词" : "自由辩论";
 
-export default function DebatePage() {
-  const { id } = useParams<{ id: string }>();
+function DebateContent() {
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id") || "";
   const [state, setState] = useState<LiveState | null>(null);
   const [loading, setLoading] = useState(true);
   const [followQ, setFollowQ] = useState<Record<number, string>>({});
@@ -197,5 +199,13 @@ export default function DebatePage() {
 
       <CommentSection debateId={id} done={isDone} />
     </div>
+  );
+}
+
+export default function DebatePage() {
+  return (
+    <Suspense fallback={<div className="text-center py-20" style={{ color: "var(--sub)" }}><Loader2 className="animate-spin mx-auto" size={32} />加载中…</div>}>
+      <DebateContent />
+    </Suspense>
   );
 }
