@@ -20,6 +20,7 @@ from src.prompts import FACT_CHECK_SYSTEM, FACT_CHECK_OPENING, FACT_CHECK_DEBATE
 from src.roles import FACT_CHECK_AGENTS, FACT_CHECK_JUDGE
 from app.core.sse_manager import sse_manager
 from app.core.config import settings
+from app.core.web_search import search_factual_claims, format_search_results
 
 
 def _ensure_api_key():
@@ -58,6 +59,21 @@ async def run_fact_check(text: str, debate_id: str):
 
     await update_status("running")
 
+    # ====== RAG：联网搜索事实证据 ======
+    await sse_manager.broadcast(debate_id, "round_start", {
+        "round": 0, "total": 3, "label": "联网检索 — 搜索相关事实进行交叉验证"
+    })
+    await sse_manager.broadcast(debate_id, "agent_start", {"agent": "搜索引擎", "round": 0})
+
+    search_results = await asyncio.to_thread(search_factual_claims, text)
+    search_text = format_search_results(search_results)
+
+    await sse_manager.broadcast(debate_id, "agent_end", {
+        "agent": "搜索引擎", "round": 0,
+        "full_text": f"已检索 {len(search_results)} 条相关资料，将作为核查参考依据。"
+    })
+    await sse_manager.broadcast(debate_id, "round_end", {"round": 0})
+
     # ====== 第 1 轮：独立审查 ======
     await sse_manager.broadcast(debate_id, "round_start", {
         "round": 1, "total": 3, "label": "独立审查 — 各 Agent 逐句分析"
@@ -68,7 +84,10 @@ async def run_fact_check(text: str, debate_id: str):
     for agent in agents:
         await sse_manager.broadcast(debate_id, "agent_start", {"agent": agent.name, "round": 1})
 
+        # 注入搜索结果
         system = FACT_CHECK_SYSTEM.format(role=agent.role, text=text)
+        if search_text:
+            system += f"\n\n## 联网搜索结果（供交叉验证）\n以下是从网络搜索到的最新资料，请用于核实文本中的事实陈述：\n\n{search_text}"
         user = FACT_CHECK_OPENING.format(stance=agent.stance)
         response = await asyncio.to_thread(chat, messages=[
             {"role": "system", "content": system}, {"role": "user", "content": user},

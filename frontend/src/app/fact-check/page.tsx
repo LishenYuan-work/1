@@ -111,9 +111,10 @@ export default function FactCheckPage() {
   const sortedRounds = Array.from(rounds).sort((a, b) => a - b);
 
   const ROUND_NAMES: Record<number, string> = {
-    1: "独立审查",
-    2: "交叉辩论",
-    3: "裁判总结",
+    0: "联网检索 — 搜索相关资料",
+    1: "独立审查 — 各 Agent 分析",
+    2: "交叉辩论 — 讨论分歧",
+    3: "裁判总结 — 最终报告",
   };
 
   const agentIndexMap = useRef<Record<string, number>>({});
