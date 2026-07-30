@@ -24,34 +24,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // 自动恢复登录状态（容错：冷启动超时不踢人）
+  // 自动恢复登录状态 —— 立即恢复 token，不阻塞页面渲染
   useEffect(() => {
     let cancelled = false;
 
-    async function restore() {
-      // 优先用 sessionStorage（游客），其次 localStorage（注册用户）
-      const saved = sessionStorage.getItem("token") || localStorage.getItem("token");
-      if (!saved) { setLoading(false); return; }
-
+    const saved = sessionStorage.getItem("token") || localStorage.getItem("token");
+    if (saved) {
+      // 立即恢复 token，页面可马上渲染
       setToken(saved);
-      // 重试 3 次，应对 Render 冷启动
-      for (let i = 0; i < 3; i++) {
-        try {
-          const u = await auth.me();
-          if (!cancelled) {
-            setUser(u);
-            setLoading(false);
+      setLoading(false);
+
+      // 后台静默验证，失败不踢人
+      (async () => {
+        for (let i = 0; i < 3; i++) {
+          try {
+            const u = await auth.me();
+            if (!cancelled) setUser(u);
+            return;
+          } catch {
+            if (i < 2) await new Promise((r) => setTimeout(r, 2000));
           }
-          return;
-        } catch {
-          if (i < 2) await new Promise((r) => setTimeout(r, 2000)); // 等 2 秒重试
         }
-      }
-      // 3 次都失败，不踢人，保留 token 继续用
-      if (!cancelled) setLoading(false);
+      })();
+    } else {
+      setLoading(false);
     }
 
-    restore();
     return () => { cancelled = true; };
   }, []);
 
