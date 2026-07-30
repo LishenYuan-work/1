@@ -54,10 +54,10 @@ app = FastAPI(
 # 1. 速率限制（最外层）
 app.middleware("http")(rate_limit_middleware)
 
-# 2. CORS
+# 2. CORS — 使用正则匹配，支持 Vercel 多部署域名
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

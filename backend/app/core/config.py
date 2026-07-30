@@ -42,5 +42,17 @@ class Settings(BaseSettings):
             origins.extend(["http://localhost:3000", "http://localhost:5173", "http://localhost:8501"])
         return origins
 
+    @property
+    def cors_origin_regex(self) -> str:
+        """匹配 localhost / vercel.app / pages.dev / 自定义 frontend_url"""
+        patterns = [
+            r"http://localhost:\d+",
+            r"https://.*\.vercel\.app",
+        ]
+        if self.frontend_url and self.frontend_url != "http://localhost:3000":
+            import re
+            patterns.append(re.escape(self.frontend_url.rstrip("/")))
+        return r"^(" + "|".join(patterns) + r")$"
+
 
 settings = Settings()
