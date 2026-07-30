@@ -7,23 +7,18 @@ import { useAuth } from "@/lib/auth";
 import { UserPlus, Loader2 } from "lucide-react";
 
 export default function LoginPage() {
-  const { loading, login, loginAsGuest } = useAuth();
+  const { user, login, loginAsGuest } = useAuth();
   const router = useRouter();
-  const [checked, setChecked] = useState(false);
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // 检查是否有保存的 token，有则直接跳转首页
+  // 已登录用户自动跳转首页（通过 AuthContext，token 已恢复才跳）
   useEffect(() => {
-    const saved = localStorage.getItem("token") || sessionStorage.getItem("token");
-    if (saved) { router.replace("/"); return; }
-    setChecked(true);
-  }, []);
-
-  if (!checked) return null; // 不渲染任何东西，直接跳转
+    if (user) router.replace("/");
+  }, [user]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
