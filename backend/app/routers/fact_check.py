@@ -18,6 +18,7 @@ MAX_TEXT_LENGTH = 10000  # 最大文本长度
 
 class FactCheckRequest(BaseModel):
     text: str = Field(..., min_length=50, max_length=MAX_TEXT_LENGTH, description="需要审查的文本")
+    rounds: int = Field(default=2, ge=1, le=4, description="核查轮数（1快速 2标准 3深度 4极致）")
 
 
 def _extract_text_from_pdf(content: bytes) -> str:
@@ -108,5 +109,5 @@ async def create_fact_check(req: FactCheckRequest, background_tasks: BackgroundT
         db.add(debate)
         await db.commit()
 
-    background_tasks.add_task(run_fact_check, text, debate_id)
+    background_tasks.add_task(run_fact_check, text, debate_id, req.rounds)
     return {"debate_id": debate_id, "status": "pending"}

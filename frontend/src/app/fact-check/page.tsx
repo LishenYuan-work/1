@@ -9,6 +9,7 @@ const SAMPLE_TEXT = `人工智能技术近年来发展迅速。据统计，2024�
 
 export default function FactCheckPage() {
   const [text, setText] = useState("");
+  const [rounds, setRounds] = useState(2);
   const [debateId, setDebateId] = useState<string | null>(null);
   const [state, setState] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -79,7 +80,7 @@ export default function FactCheckPage() {
       const r = await fetch(`${BASE}/api/fact-check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: text.trim() }),
+        body: JSON.stringify({ text: text.trim(), rounds }),
       });
       const data = await r.json();
       setDebateId(data.debate_id);
@@ -106,9 +107,9 @@ export default function FactCheckPage() {
   }
 
   // 按轮次分组
-  const rounds = new Set<number>();
-  allMsgs.forEach((m: any) => rounds.add(m.round_num));
-  const sortedRounds = Array.from(rounds).sort((a, b) => a - b);
+  const roundSet = new Set<number>();
+  allMsgs.forEach((m: any) => roundSet.add(m.round_num));
+  const sortedRounds = Array.from(roundSet).sort((a, b) => a - b);
 
   const ROUND_NAMES: Record<number, string> = {
     0: "联网检索 — 搜索相关资料",
@@ -179,6 +180,17 @@ export default function FactCheckPage() {
               填入示例文本
             </button>
           </p>
+          {/* 轮数选择 */}
+          <div className="mt-3">
+            <label className="text-xs font-semibold" style={{ color: "var(--sub)" }}>
+              核查深度：{rounds === 1 ? "快速" : rounds === 2 ? "标准" : rounds === 3 ? "深度" : "极致"}（{rounds} 轮辩论）
+            </label>
+            <input type="range" min="1" max="4" value={rounds} onChange={(e) => setRounds(Number(e.target.value))}
+              className="w-full mt-1" style={{ accentColor: "var(--accent)" }} />
+            <div className="flex justify-between text-[10px]" style={{ color: "var(--sub)" }}>
+              <span>快速</span><span>标准</span><span>深度</span><span>极致</span>
+            </div>
+          </div>
           {error && <p className="text-red-500 text-xs mt-2">{error}</p>}
           <button onClick={handleSubmit} disabled={loading || text.trim().length < 50}
             className="mt-3 px-6 py-2.5 rounded-lg text-white font-semibold border-0 cursor-pointer disabled:opacity-50 flex items-center gap-2"
