@@ -66,7 +66,7 @@ export default function FactCheckPage() {
     }
 
     poll();
-    timer = setInterval(poll, 1000);
+    timer = setInterval(poll, 500); // 0.5秒轮询
     return () => { active = false; clearInterval(timer); };
   }, [debateId]);
 

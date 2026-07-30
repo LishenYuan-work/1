@@ -38,7 +38,7 @@ export default function DebatePage() {
     }
 
     tick(); // 立即执行第一次
-    timer = setInterval(tick, 1000); // 每秒轮询
+    timer = setInterval(tick, 500); // 0.5秒轮询，更流畅的逐字效果
     return () => { active = false; clearInterval(timer); };
   }, [id]);
 
