@@ -41,7 +41,7 @@ export default function LoginPage() {
     setError(""); setSubmitting(true);
     try {
       // 直接 fetch 兜底，避免 context 层问题
-      const BASE = process.env.NEXT_PUBLIC_API_URL || "";
+      const BASE = process.env.NEXT_PUBLIC_API_URL || "https://1-0plp.onrender.com";
       const res = await fetch(`${BASE}/api/auth/guest`, { method: "POST" });
       if (!res.ok) throw new Error("游客登录失败");
       const data = await res.json();

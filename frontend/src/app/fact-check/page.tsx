@@ -25,7 +25,7 @@ export default function FactCheckPage() {
     }
     setUploading(true); setError(""); setUploadedFile("");
     try {
-      const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const BASE = process.env.NEXT_PUBLIC_API_URL || "https://1-0plp.onrender.com";
       const form = new FormData();
       form.append("file", file);
       const r = await fetch(`${BASE}/api/fact-check/upload`, { method: "POST", body: form });
@@ -54,7 +54,7 @@ export default function FactCheckPage() {
 
     async function poll() {
       try {
-        const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const BASE = process.env.NEXT_PUBLIC_API_URL || "https://1-0plp.onrender.com";
         const r = await fetch(`${BASE}/api/debates/${debateId}/live`);
         if (!active) return;
         const s = await r.json();
@@ -76,7 +76,7 @@ export default function FactCheckPage() {
     setError(""); setLoading(true); setState(null);
 
     try {
-      const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const BASE = process.env.NEXT_PUBLIC_API_URL || "https://1-0plp.onrender.com";
       const r = await fetch(`${BASE}/api/fact-check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

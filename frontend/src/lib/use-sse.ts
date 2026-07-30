@@ -14,7 +14,7 @@ export function useDebateStream(debateId: string | null) {
     // 断开旧连接
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
 
-    const url = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/debates/${debateId}/stream`;
+    const url = `${process.env.NEXT_PUBLIC_API_URL || "https://1-0plp.onrender.com"}/api/debates/${debateId}/stream`;
     const es = new EventSource(url);
     esRef.current = es;
 
