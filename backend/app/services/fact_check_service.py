@@ -31,75 +31,81 @@ def _ensure_api_key():
 
 
 async def run_fact_check(text: str, debate_id: str):
-    """异步执行事实核查：轮询式推送事件"""
+    """异步执行事实核查：DB写入 + SSE推送"""
     _ensure_api_key()
+
+    from app.db.models import Debate, DebateMessage as DebateMessageModel
+    from app.db.database import async_session
+    from sqlalchemy import select
 
     agents = FACT_CHECK_AGENTS
     judge = FACT_CHECK_JUDGE
 
+    async def save_msg(agent_name: str, content: str, round_num: int):
+        """保存发言到数据库"""
+        async with async_session() as db:
+            msg = DebateMessageModel(debate_id=debate_id, agent_name=agent_name, content=content, round_num=round_num)
+            db.add(msg)
+            await db.commit()
+
+    async def update_status(status: str):
+        async with async_session() as db:
+            r = await db.execute(select(Debate).where(Debate.id == debate_id))
+            d = r.scalar_one_or_none()
+            if d:
+                d.status = status
+                await db.commit()
+
+    await update_status("running")
+
     # ====== 第 1 轮：独立审查 ======
     await sse_manager.broadcast(debate_id, "round_start", {
-        "round": 1, "total": 2, "label": "独立审查 — 各 Agent 逐句分析"
+        "round": 1, "total": 3, "label": "独立审查 — 各 Agent 逐句分析"
     })
 
     findings: dict[str, str] = {}
 
     for agent in agents:
-        await sse_manager.broadcast(debate_id, "agent_start", {
-            "agent": agent.name, "round": 1
-        })
+        await sse_manager.broadcast(debate_id, "agent_start", {"agent": agent.name, "round": 1})
 
-        # 逐字模拟
         system = FACT_CHECK_SYSTEM.format(role=agent.role, text=text)
         user = FACT_CHECK_OPENING.format(stance=agent.stance)
-        response = await asyncio.to_thread(
-            chat,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
+        response = await asyncio.to_thread(chat, messages=[
+            {"role": "system", "content": system}, {"role": "user", "content": user},
+        ])
 
         findings[agent.name] = response
-        await sse_manager.broadcast(debate_id, "agent_end", {
-            "agent": agent.name, "round": 1, "full_text": response
-        })
+        await save_msg(agent.name, response, 1)
+        await sse_manager.broadcast(debate_id, "agent_end", {"agent": agent.name, "round": 1, "full_text": response})
         await asyncio.sleep(1)
 
     await sse_manager.broadcast(debate_id, "round_end", {"round": 1})
 
     # ====== 第 2 轮：交叉辩论 ======
     await sse_manager.broadcast(debate_id, "round_start", {
-        "round": 2, "total": 2, "label": "交叉辩论 — 讨论分歧点"
+        "round": 2, "total": 3, "label": "交叉辩论 — 讨论分歧点"
     })
 
-    # 合并其他人的发现
     debate_findings: dict[str, str] = {}
     for agent in agents:
         others = {k: v for k, v in findings.items() if k != agent.name}
         other_text = "\n\n".join(f"### {k}\n{v}" for k, v in others.items())
 
-        await sse_manager.broadcast(debate_id, "agent_start", {
-            "agent": agent.name, "round": 2
-        })
+        await sse_manager.broadcast(debate_id, "agent_start", {"agent": agent.name, "round": 2})
 
-        response = await asyncio.to_thread(
-            chat,
-            messages=[
-                {"role": "system", "content": FACT_CHECK_SYSTEM.format(role=agent.role, text=text)},
-                {"role": "user", "content": FACT_CHECK_DEBATE.format(other_findings=other_text)},
-            ],
-        )
+        response = await asyncio.to_thread(chat, messages=[
+            {"role": "system", "content": FACT_CHECK_SYSTEM.format(role=agent.role, text=text)},
+            {"role": "user", "content": FACT_CHECK_DEBATE.format(other_findings=other_text)},
+        ])
 
         debate_findings[agent.name] = response
-        await sse_manager.broadcast(debate_id, "agent_end", {
-            "agent": agent.name, "round": 2, "full_text": response
-        })
+        await save_msg(agent.name, response, 2)
+        await sse_manager.broadcast(debate_id, "agent_end", {"agent": agent.name, "round": 2, "full_text": response})
         await asyncio.sleep(1)
 
     await sse_manager.broadcast(debate_id, "round_end", {"round": 2})
 
-    # ====== 裁判总结 ======
+    # ====== 第 3 轮：裁判总结 ======
     await sse_manager.broadcast(debate_id, "round_start", {
         "round": 3, "total": 3, "label": "裁判总结 — 整合结论"
     })
@@ -109,20 +115,16 @@ async def run_fact_check(text: str, debate_id: str):
         for name in [a.name for a in agents]
     )
 
-    await sse_manager.broadcast(debate_id, "agent_start", {
-        "agent": judge.name, "round": 3
-    })
+    await sse_manager.broadcast(debate_id, "agent_start", {"agent": judge.name, "round": 3})
 
-    verdict = await asyncio.to_thread(
-        chat,
-        messages=[
-            {"role": "system", "content": judge.role},
-            {"role": "user", "content": FACT_CHECK_JUDGE.format(all_findings=all_text)},
-        ],
-    )
+    verdict = await asyncio.to_thread(chat, messages=[
+        {"role": "system", "content": judge.role},
+        {"role": "user", "content": FACT_CHECK_JUDGE.format(all_findings=all_text)},
+    ])
 
-    await sse_manager.broadcast(debate_id, "agent_end", {
-        "agent": judge.name, "round": 3, "full_text": verdict
-    })
+    await save_msg(judge.name, verdict, 3)
+    await sse_manager.broadcast(debate_id, "agent_end", {"agent": judge.name, "round": 3, "full_text": verdict})
     await sse_manager.broadcast(debate_id, "round_end", {"round": 3})
+
+    await update_status("completed")
     await sse_manager.broadcast(debate_id, "done", {"status": "completed"})
