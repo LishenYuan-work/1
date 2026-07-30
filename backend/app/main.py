@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.rate_limit import rate_limit_middleware
 from app.db.database import init_db
-from app.routers import debates, templates, auth, comments
+from app.routers import debates, templates, auth, comments, fact_check
 
 
 @asynccontextmanager
@@ -69,6 +69,7 @@ app.include_router(debates.router)
 app.include_router(templates.router)
 app.include_router(auth.router)
 app.include_router(comments.router)
+app.include_router(fact_check.router)
 
 
 @app.get("/api/health")

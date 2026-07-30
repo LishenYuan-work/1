@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AuthProvider, useAuth } from "@/lib/auth";
-import { MessageCircle, PlusCircle, User, LogOut, LogIn } from "lucide-react";
+import { MessageCircle, PlusCircle, User, LogOut, LogIn, ShieldCheck } from "lucide-react";
 
 function Navbar() {
   const { user, logout } = useAuth();
@@ -21,6 +21,10 @@ function Navbar() {
         <div className="flex items-center gap-1.5 sm:gap-3 text-xs sm:text-sm">
           <Link href="/" className={`no-underline ${pathname === "/" ? "font-semibold" : ""}`}
             style={{ color: pathname === "/" ? "var(--accent)" : "var(--sub)" }}>发现</Link>
+          <Link href="/fact-check" className={`no-underline ${pathname === "/fact-check" ? "font-semibold" : ""}`}
+            style={{ color: pathname === "/fact-check" ? "var(--accent)" : "var(--sub)" }}>
+            <ShieldCheck size={16} className="inline mr-0.5" />核查
+          </Link>
           {user ? (
             <>
               <Link href="/create" className={`no-underline ${pathname === "/create" ? "font-semibold" : ""}`}
