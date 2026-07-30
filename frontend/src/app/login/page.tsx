@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { UserPlus, Loader2 } from "lucide-react";
+import { UserPlus } from "lucide-react";
 
 export default function LoginPage() {
   const { user, login, loginAsGuest } = useAuth();
@@ -15,19 +15,23 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // 已登录用户自动跳转首页（通过 AuthContext，token 已恢复才跳）
+  // 已通过验证的用户自动跳转首页
   useEffect(() => {
     if (user) router.replace("/");
   }, [user]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!phone.trim() || !password.trim()) {
+      setError("请输入手机号和密码"); return;
+    }
     setError(""); setSubmitting(true);
     try {
-      await login(phone, password, rememberMe);
+      await login(phone.trim(), password, rememberMe);
       router.push("/");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "登录失败");
+      const msg = err instanceof Error ? err.message : "登录失败";
+      setError(msg.includes("401") ? "手机号或密码错误" : msg.includes("fetch") ? "网络连接失败，请检查后端服务" : msg);
     } finally {
       setSubmitting(false);
     }
@@ -39,7 +43,8 @@ export default function LoginPage() {
       await loginAsGuest();
       router.push("/");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "游客登录失败");
+      const msg = err instanceof Error ? err.message : "游客登录失败";
+      setError(msg.includes("fetch") ? "网络连接失败，请检查后端服务" : msg);
     } finally {
       setSubmitting(false);
     }
@@ -49,9 +54,8 @@ export default function LoginPage() {
     <div className="w-full max-w-sm mx-auto mt-8 sm:mt-16 px-4 sm:px-0">
       <h1 className="text-xl font-bold mb-6 text-center">登录</h1>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <input type="tel" placeholder="手机号" value={phone}
-          onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 11))}
-          required pattern="1[3-9]\d{9}" maxLength={11}
+        <input type="text" inputMode="numeric" placeholder="手机号" value={phone}
+          onChange={(e) => setPhone(e.target.value)} required
           className="px-3 py-2 rounded-lg border text-sm"
           style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--text)" }} />
         <input type="password" placeholder="密码" value={password}
