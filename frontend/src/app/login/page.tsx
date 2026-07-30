@@ -40,14 +40,8 @@ export default function LoginPage() {
   async function handleGuest() {
     setError(""); setSubmitting(true);
     try {
-      // 直接 fetch 兜底，避免 context 层问题
-      const BASE = process.env.NEXT_PUBLIC_API_URL || "https://1-0plp.onrender.com";
-      const res = await fetch(`${BASE}/api/auth/guest`, { method: "POST" });
-      if (!res.ok) throw new Error("游客登录失败");
-      const data = await res.json();
-      // 手动保存 token 和用户状态
-      sessionStorage.setItem("token", data.access_token);
-      router.push("/");
+      await loginAsGuest();
+      // useEffect 监测到 user 变动后自动跳转首页
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "游客登录失败";
       setError(msg.includes("fetch") || msg.includes("Failed") ? "网络连接失败，请检查后端服务" : msg);
