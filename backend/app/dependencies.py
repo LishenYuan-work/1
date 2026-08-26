@@ -1,35 +1,53 @@
-"""FastAPI 依赖注入：数据库会话 + 当前用户"""
+"""Authentication and organization authorization dependencies."""
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Cookie, Depends, Header, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import decode_token
 from app.db.database import get_db
-from app.db.models import Profile
-from app.core.security import verify_token
+from app.db.models import OrganizationMember, Profile
 
 security_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
+    access_cookie: str | None = Cookie(default=None, alias="review_access"),
     db: AsyncSession = Depends(get_db),
 ) -> Profile | None:
-    """从 Authorization Header 获取当前用户（可选登录）"""
-    if credentials is None:
+    raw_token = credentials.credentials if credentials else access_cookie
+    if not raw_token:
         return None
-    user_id = verify_token(credentials.credentials)
-    if user_id is None:
+    payload = decode_token(raw_token)
+    if not payload:
         return None
-    result = await db.execute(select(Profile).where(Profile.id == user_id))
-    return result.scalar_one_or_none()
-
-
-async def require_user(
-    user: Profile | None = Depends(get_current_user),
-) -> Profile:
-    """要求必须登录"""
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
+    user = await db.scalar(select(Profile).where(Profile.id == payload["sub"], Profile.is_active.is_(True)))
+    if not user or int(payload.get("ver", 0)) != user.token_version:
+        return None
     return user
+
+
+async def require_user(user: Profile | None = Depends(get_current_user)) -> Profile:
+    if not user:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "请先登录")
+    if not user.email_verified_at:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "请先验证邮箱")
+    return user
+
+
+async def require_organization_member(
+    x_organization_id: str = Header(alias="X-Organization-ID"),
+    user: Profile = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+) -> OrganizationMember:
+    membership = await db.scalar(
+        select(OrganizationMember).where(
+            OrganizationMember.organization_id == x_organization_id,
+            OrganizationMember.user_id == user.id,
+        )
+    )
+    if not membership:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "资源不存在")
+    return membership

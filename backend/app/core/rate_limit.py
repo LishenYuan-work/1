@@ -8,7 +8,10 @@
 import time
 import asyncio
 from collections import defaultdict
+from datetime import datetime, timezone
+
 from fastapi import Request, HTTPException, status
+from app.core.config import settings
 
 
 class RateLimiter:
@@ -52,11 +55,47 @@ class RateLimiter:
 rate_limiter = RateLimiter()
 
 
+async def check_shared_limit(key: str, max_requests: int, window_seconds: int) -> bool:
+    """Atomically enforce a shared limit through PostgreSQL."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+    from app.db.database import async_session
+    from app.db.models import RateLimitBucket
+
+    for attempt in range(3):
+        now = datetime.now(timezone.utc)
+        try:
+            async with async_session() as db:
+                row = await db.scalar(select(RateLimitBucket).where(RateLimitBucket.key == key).with_for_update())
+                if row is None:
+                    db.add(RateLimitBucket(key=key, window_started_at=now, request_count=1))
+                    await db.commit()
+                    return True
+                started = row.window_started_at
+                started = started.replace(tzinfo=timezone.utc) if started.tzinfo is None else started.astimezone(timezone.utc)
+                age = (now - started).total_seconds()
+                if age >= window_seconds:
+                    row.window_started_at, row.request_count = now, 1
+                    await db.commit()
+                    return True
+                if row.request_count >= max_requests:
+                    await db.rollback()
+                    return False
+                row.request_count += 1
+                await db.commit()
+                return True
+        except IntegrityError:
+            if attempt == 2:
+                raise
+            continue
+    return False
+
+
 # ========== FastAPI 中间件 ==========
 
-# 每个 IP 每分钟最多创建 5 场辩论（保护 API 额度）
-DEBATE_CREATE_LIMIT = 5
-DEBATE_CREATE_WINDOW = 60
+# 每个 IP 每分钟最多启动 5 个评审（保护 API 额度）
+REVIEW_CREATE_LIMIT = 5
+REVIEW_CREATE_WINDOW = 60
 
 # 每个 IP 每分钟最多 120 次普通请求
 GENERAL_LIMIT = 120
@@ -65,12 +104,13 @@ GENERAL_WINDOW = 60
 
 def get_client_ip(request: Request) -> str:
     """获取客户端真实 IP（支持代理）"""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip
+    if settings.trust_proxy_headers:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip
     return request.client.host if request.client else "unknown"
 
 
@@ -80,16 +120,17 @@ async def rate_limit_middleware(request: Request, call_next):
 
     ip = get_client_ip(request)
 
-    # 创建辩论接口用更严格的限制
-    if request.url.path == "/api/debates" and request.method == "POST":
-        allowed = await rate_limiter.check(f"debate:{ip}", DEBATE_CREATE_LIMIT, DEBATE_CREATE_WINDOW)
+    if request.url.path.endswith("/start") and request.method == "POST":
+        check = check_shared_limit if settings.rate_limit_backend == "database" else rate_limiter.check
+        allowed = await check(f"review:{ip}", REVIEW_CREATE_LIMIT, REVIEW_CREATE_WINDOW)
         if not allowed:
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                content={"detail": f"创建辩论太频繁，每{DEBATE_CREATE_WINDOW}秒最多{DEBATE_CREATE_LIMIT}次，请稍后再试"},
+                content={"detail": f"启动评审太频繁，每{REVIEW_CREATE_WINDOW}秒最多{REVIEW_CREATE_LIMIT}次，请稍后再试"},
             )
     else:
-        allowed = await rate_limiter.check(f"general:{ip}", GENERAL_LIMIT, GENERAL_WINDOW)
+        check = check_shared_limit if settings.rate_limit_backend == "database" else rate_limiter.check
+        allowed = await check(f"general:{ip}", GENERAL_LIMIT, GENERAL_WINDOW)
         if not allowed:
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

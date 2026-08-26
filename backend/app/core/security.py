@@ -1,49 +1,62 @@
-"""JWT Token 创建/验证 + 密码哈希"""
+"""Password, signed token, and one-time token helpers."""
 
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
-from jose import jwt, JWTError
+from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
 
-# 密码哈希
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# JWT 配置
-SECRET_KEY = settings.jwt_secret
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 小时
-REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+def verify_password(password: str, password_hash: str) -> bool:
+    return pwd_context.verify(password, password_hash)
 
 
-def create_access_token(user_id: str, remember_me: bool = False) -> str:
-    minutes = ACCESS_TOKEN_EXPIRE_MINUTES
+def _create_jwt(user_id: str, token_type: str, expires: timedelta, token_version: int = 0) -> str:
+    payload = {"sub": user_id, "type": token_type, "ver": token_version, "exp": datetime.now(timezone.utc) + expires}
+    return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)
+
+
+def create_access_token(user_id: str, remember_me: bool = False, token_version: int = 0) -> str:
+    minutes = settings.access_token_minutes
     if remember_me:
-        minutes = REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60  # 7 天
-    expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-    payload = {"sub": user_id, "exp": expire, "type": "access"}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        minutes = settings.refresh_token_days * 24 * 60
+    return _create_jwt(user_id, "access", timedelta(minutes=minutes), token_version)
 
 
-def create_refresh_token(user_id: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    payload = {"sub": user_id, "exp": expire, "type": "refresh"}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+def create_refresh_token(user_id: str, token_version: int = 0) -> str:
+    return _create_jwt(user_id, "refresh", timedelta(days=settings.refresh_token_days), token_version)
 
 
-def verify_token(token: str) -> str | None:
-    """验证 Token，返回 user_id 或 None"""
+def decode_token(token: str, expected_type: str = "access") -> dict[str, Any] | None:
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload.get("sub")
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[ALGORITHM])
+        if payload.get("type") != expected_type or not payload.get("sub"):
+            return None
+        return payload
     except JWTError:
         return None
+
+
+def verify_token(token: str, expected_type: str = "access") -> str | None:
+    payload = decode_token(token, expected_type)
+    return str(payload["sub"]) if payload else None
+
+
+def create_one_time_token() -> tuple[str, str]:
+    raw = secrets.token_urlsafe(32)
+    return raw, hash_one_time_token(raw)
+
+
+def hash_one_time_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()

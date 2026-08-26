@@ -1,168 +1,233 @@
-/** API 客户端 — 封装对后端的所有请求 */
-
-const BASE = process.env.NEXT_PUBLIC_API_URL || "https://1-0plp.onrender.com";
-
-function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("token");
-}
+const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function request<T>(
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
+  org?: string,
 ): Promise<T> {
   const headers: Record<string, string> = {};
-  if (body) headers["Content-Type"] = "application/json";
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
-  const res = await fetch(`${BASE}${path}`, {
+  if (org) headers["X-Organization-ID"] = org;
+  if (typeof document !== "undefined" && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const csrf = document.cookie
+      .split(";")
+      .map((item) => item.trim())
+      .find((item) => item.startsWith("review_csrf="))
+      ?.split("=")
+      .slice(1)
+      .join("=");
+    if (csrf) headers["X-CSRF-Token"] = decodeURIComponent(csrf);
+  }
+  if (body instanceof FormData) {
+    /* browser sets multipart boundary */
+  } else if (body !== undefined) headers["Content-Type"] = "application/json";
+  const response = await fetch(`${BASE}${path}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    credentials: "include",
+    body:
+      body instanceof FormData
+        ? body
+        : body === undefined
+          ? undefined
+          : JSON.stringify(body),
   });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `HTTP ${res.status}`);
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ detail: response.statusText }));
+    throw new Error(error.detail || "请求失败");
   }
-
-  if (res.status === 204) return undefined as T;
-  return res.json();
+  if (response.status === 204) return undefined as T;
+  return response.json();
 }
 
-// ====== Auth ======
-export const auth = {
-  register: (data: { phone: string; password: string; display_name?: string }) =>
-    request<AuthResponse>("POST", "/api/auth/register", data),
-  login: (data: { phone: string; password: string; remember_me?: boolean }) =>
-    request<AuthResponse>("POST", "/api/auth/login", data),
-  guest: () => request<AuthResponse>("POST", "/api/auth/guest"),
-  me: () => request<UserProfile>("GET", "/api/auth/me"),
-  clearGuest: () => request<void>("POST", "/api/auth/clear-guest"),
-};
-
-// ====== Debates ======
-export const debates = {
-  create: (data: CreateDebateInput) =>
-    request<DebateSummary>("POST", "/api/debates", data),
-  list: (params?: { status?: string; limit?: number; offset?: number }) => {
-    const qs = new URLSearchParams();
-    if (params?.status) qs.set("status", params.status);
-    if (params?.limit) qs.set("limit", String(params.limit));
-    if (params?.offset) qs.set("offset", String(params.offset));
-    return request<DebateSummary[]>("GET", `/api/debates?${qs}`);
+export const api = {
+  auth: {
+    register: (body: RegisterInput) =>
+      request<AuthResponse>("POST", "/api/auth/register", body),
+    login: (body: { email: string; password: string; remember_me: boolean }) =>
+      request<AuthResponse>("POST", "/api/auth/login", body),
+    verify: (token: string) =>
+      request<{ status: string }>("POST", "/api/auth/verify-email", { token }),
+    resend: (email: string) =>
+      request<{ status: string }>("POST", "/api/auth/resend-verification", {
+        email,
+      }),
+    forgot: (email: string) =>
+      request<{ status: string }>("POST", "/api/auth/forgot-password", {
+        email,
+      }),
+    reset: (token: string, password: string) =>
+      request<{ status: string }>("POST", "/api/auth/reset-password", {
+        token,
+        password,
+      }),
+    me: () => request<UserProfile>("GET", "/api/auth/me"),
+    refresh: () => request<AuthResponse>("POST", "/api/auth/refresh"),
+    logout: () => request<{ status: string }>("POST", "/api/auth/logout"),
   },
-  myList: () => request<DebateSummary[]>("GET", "/api/debates/my"),
-  get: (id: string) => request<DebateDetail>("GET", `/api/debates/${id}`),
-  delete: (id: string) => request<void>("DELETE", `/api/debates/${id}`),
-  followup: (id: string, data: { message_index: number; question: string }) =>
-    request<{ reply: string; agent: string }>("POST", `/api/debates/${id}/followup`, data),
-  streamUrl: (id: string) => `${BASE}/api/debates/${id}/stream`,
-  live: (id: string) => request<LiveState>("GET", `/api/debates/${id}/live`),
+  reviews: {
+    list: (organizationId: string) =>
+      request<ReviewSummary[]>(
+        "GET",
+        `/api/reviews?organization_id=${encodeURIComponent(organizationId)}`,
+      ),
+    create: (body: {
+      organization_id: string;
+      topic?: string;
+      max_round: number;
+    }) =>
+      request<ReviewSummary>(
+        "POST",
+        "/api/reviews",
+        body,
+        body.organization_id,
+      ),
+    get: (id: string, org?: string) =>
+      request<ReviewDetail>("GET", `/api/reviews/${id}`, undefined, org),
+    upload: (id: string, file: File, org?: string) => {
+      const form = new FormData();
+      form.append("file", file);
+      return request<ReviewDocument>(
+        "POST",
+        `/api/reviews/${id}/documents`,
+        form,
+        org,
+      );
+    },
+    start: (id: string, org?: string) =>
+      request<ReviewProgress>(
+        "POST",
+        `/api/reviews/${id}/start`,
+        undefined,
+        org,
+      ),
+    humanReview: (id: string, approved: boolean, note?: string, org?: string) =>
+      request<ReviewProgress>(
+        "POST",
+        `/api/reviews/${id}/human-review`,
+        { approved, note },
+        org,
+      ),
+    evidence: (id: string, org?: string) =>
+      request<EvidenceItem[]>(
+        "GET",
+        `/api/reviews/${id}/evidence`,
+        undefined,
+        org,
+      ),
+    report: (id: string, org?: string) =>
+      request<{ markdown: string }>(
+        "GET",
+        `/api/reviews/${id}/report`,
+        undefined,
+        org,
+      ),
+    downloadUrl: (id: string) => `${BASE}/api/reviews/${id}/report.md`,
+    delete: (id: string, org?: string) =>
+      request<void>("DELETE", `/api/reviews/${id}`, undefined, org),
+  },
+  organizations: {
+    invite: (id: string, email: string) =>
+      request("POST", `/api/organizations/${id}/invites`, { email }),
+    removeMember: (id: string, userId: string) =>
+      request<void>("DELETE", `/api/organizations/${id}/members/${userId}`),
+  },
 };
 
-// ====== Comments ======
-export const comments = {
-  list: (debateId: string) => request<CommentItem[]>("GET", `/api/debates/${debateId}/comments`),
-  create: (debateId: string, data: { content: string; parent_id?: number }) =>
-    request<CommentItem>("POST", `/api/debates/${debateId}/comments`, data),
-  delete: (debateId: string, commentId: number) =>
-    request<void>("DELETE", `/api/debates/${debateId}/comments/${commentId}`),
-};
-
-// ====== Templates ======
-export const templates = {
-  list: () => request<Template[]>("GET", "/api/templates"),
-  recommend: (topic: string) =>
-    request<{ agents: AgentConfig[] }>("POST", "/api/templates/ai-recommend", { topic }),
-};
-
-// ====== Types ======
-export interface AgentConfig {
+export function authToken() {
+  return null;
+}
+export function apiBase() {
+  return BASE;
+}
+export interface RegisterInput {
+  email: string;
+  password: string;
+  display_name?: string;
+  organization_name?: string;
+  invite_token?: string;
+}
+export interface Organization {
+  id: string;
   name: string;
   role: string;
-  stance: string;
 }
-
-export interface CreateDebateInput {
-  topic: string;
-  agents: AgentConfig[];
-  rounds: number;
-  mode?: string;
-  visibility?: string;
-}
-
-export interface DebateSummary {
-  id: string;
-  topic: string;
-  rounds: number;
-  status: string;
-  mode: string;
-  visibility: string;
-  agents: AgentConfig[];
-  message_count: number;
-  creator_name: string | null;
-  created_at: string;
-}
-
-export interface DebateDetail extends DebateSummary {
-  messages: MessageItem[];
-  error_message: string | null;
-  completed_at: string | null;
-}
-
-export interface MessageItem {
-  agent_name: string;
-  content: string;
-  round_num: number;
-}
-
-export interface AuthResponse {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-  user: UserProfile;
-}
-
 export interface UserProfile {
   id: string;
-  phone: string;
+  email: string;
   display_name: string | null;
-  is_guest: boolean;
+  email_verified: boolean;
+  organizations: Organization[];
   created_at: string;
 }
-
-export interface CommentItem {
-  id: number;
-  debate_id: string;
-  user_id: string | null;
-  username: string | null;
-  content: string;
-  parent_id: number | null;
-  replies: CommentItem[];
-  created_at: string;
+export interface AuthResponse {
+  access_token?: string;
+  refresh_token?: string;
+  user: UserProfile;
+  token_type: string;
 }
-
-export interface Template {
-  name: string;
-  agents: AgentConfig[];
-}
-
-/** SSE 事件类型 */
-export interface LiveState {
+export interface ReviewSummary {
+  id: string;
+  organization_id: string;
+  topic: string | null;
+  max_round: number;
+  current_round: number;
+  current_stage: string;
   status: string;
-  messages: MessageItem[];
-  streaming: { agent_name: string; round_num: number; text: string } | null;
+  document_count: number;
+  evidence_count: number;
+  creator_id: string;
+  creator_name: string | null;
+  created_at: string;
+  updated_at: string;
 }
-
-export type SSEEvent =
-  | { type: "round_start"; round: number; total: number }
-  | { type: "agent_start"; agent: string; round: number }
-  | { type: "chunk"; agent: string; round: number; text: string }
-  | { type: "agent_end"; agent: string; round: number; full_text: string }
-  | { type: "round_end"; round: number }
-  | { type: "done"; debate_id?: string; status?: string }
-  | { type: "error"; message: string; agent?: string }
-  | { type: "cancelled"; message?: string };
+export interface ReviewDocument {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  parse_status: string;
+  parse_error?: string | null;
+}
+export interface ReviewOutput {
+  id: string;
+  agent_role: string;
+  round_num: number;
+  sequence: number;
+  content_markdown: string;
+  structured_data?: Record<string, unknown> | null;
+  created_at: string;
+}
+export interface ReviewDetail extends ReviewSummary {
+  documents: ReviewDocument[];
+  outputs: ReviewOutput[];
+  report_markdown?: string | null;
+  error_message?: string | null;
+}
+export interface ReviewProgress {
+  session_id: string;
+  status: string;
+  current_stage: string;
+  current_round: number;
+  max_round: number;
+  output_count: number;
+  evidence_count: number;
+  report_ready: boolean;
+  error_message?: string | null;
+}
+export interface EvidenceItem {
+  id: string;
+  round_num: number;
+  argument_role: string;
+  claim_text: string;
+  verdict: "verified" | "contradicted" | "uncertain";
+  rationale: string;
+  sources: {
+    id: string;
+    title: string;
+    url: string;
+    snippet?: string | null;
+  }[];
+}

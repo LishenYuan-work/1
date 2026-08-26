@@ -1,75 +1,50 @@
 "use client";
 
-import { useRef, useCallback, useState, useEffect } from "react";
-import type { SSEEvent } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiBase, authToken } from "./api";
 
-export function useDebateStream(debateId: string | null) {
-  const [events, setEvents] = useState<SSEEvent[]>([]);
+export type ReviewEvent = { type: string; session_id: string; sequence: number; [key: string]: unknown };
+
+export function useReviewStream(sessionId: string | null, onEvent: (event: ReviewEvent) => void) {
   const [connected, setConnected] = useState(false);
-  const [done, setDone] = useState(false);
-  const esRef = useRef<EventSource | null>(null);
+  const last = useRef(0);
+  const activeSession = useRef<string | null>(null);
+  const abort = useRef<AbortController | null>(null);
 
-  const connect = useCallback(() => {
-    if (!debateId) return;
-    // 断开旧连接
-    if (esRef.current) { esRef.current.close(); esRef.current = null; }
-
-    const url = `${process.env.NEXT_PUBLIC_API_URL || "https://1-0plp.onrender.com"}/api/debates/${debateId}/stream`;
-    const es = new EventSource(url);
-    esRef.current = es;
-
-    es.onopen = () => setConnected(true);
-
-    es.addEventListener("round_start", (e) => {
-      const data = JSON.parse(e.data);
-      setEvents((prev) => [...prev, { type: "round_start", ...data }]);
-    });
-    es.addEventListener("agent_start", (e) => {
-      const data = JSON.parse(e.data);
-      setEvents((prev) => [...prev, { type: "agent_start", ...data }]);
-    });
-    es.addEventListener("chunk", (e) => {
-      const data = JSON.parse(e.data);
-      setEvents((prev) => [...prev, { type: "chunk", ...data }]);
-    });
-    es.addEventListener("agent_end", (e) => {
-      const data = JSON.parse(e.data);
-      setEvents((prev) => [...prev, { type: "agent_end", ...data }]);
-    });
-    es.addEventListener("round_end", (e) => {
-      const data = JSON.parse(e.data);
-      setEvents((prev) => [...prev, { type: "round_end", ...data }]);
-    });
-    es.addEventListener("done", (e) => {
-      const data = JSON.parse(e.data);
-      setEvents((prev) => [...prev, { type: "done", ...data }]);
-      setDone(true);
-      es.close();
-    });
-    es.addEventListener("error", (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data);
-        setEvents((prev) => [...prev, { type: "error", ...data }]);
-      } catch {
-        // 连接错误（断线等），EventSource 会自动重连
+  const connect = useCallback(async (targetSessionId = sessionId) => {
+    if (!targetSessionId) return;
+    if (activeSession.current !== targetSessionId) { last.current = 0; activeSession.current = targetSessionId; }
+    abort.current?.abort();
+    const controller = new AbortController();
+    abort.current = controller;
+    let attempt = 0;
+    try {
+      while (!controller.signal.aborted && attempt < 6) {
+        try {
+          const response = await fetch(`${apiBase()}/api/reviews/${targetSessionId}/stream`, {
+            headers: { Authorization: `Bearer ${authToken() || ""}`, "Last-Event-ID": String(last.current) },
+            credentials: "include", signal: controller.signal,
+          });
+          if (!response.ok || !response.body) throw new Error("SSE connection failed");
+          setConnected(true); attempt = 0;
+          const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ""; let finished = false;
+          while (!controller.signal.aborted) {
+            const { value, done } = await reader.read(); if (done) break;
+            buffer += decoder.decode(value, { stream: true }); const chunks = buffer.split("\n\n"); buffer = chunks.pop() || "";
+            for (const chunk of chunks) {
+              const dataLine = chunk.split("\n").find((line) => line.startsWith("data: ")); if (!dataLine) continue;
+              const event = JSON.parse(dataLine.slice(6)) as ReviewEvent; last.current = event.sequence || last.current; onEvent(event);
+              if (event.type === "done") { finished = true; break; }
+            }
+            if (finished) return;
+          }
+        } catch { if (controller.signal.aborted) return; }
+        setConnected(false); attempt += 1;
+        if (attempt < 6) await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * 2 ** (attempt - 1), 10000)));
       }
-    });
+    } finally { if (!controller.signal.aborted) setConnected(false); }
+  }, [sessionId, onEvent]);
 
-    es.onerror = () => {
-      setConnected(false);
-      // EventSource 自动重连，不需要手动处理
-    };
-  }, [debateId]);
-
-  const disconnect = useCallback(() => {
-    esRef.current?.close();
-    esRef.current = null;
-    setConnected(false);
-  }, []);
-
-  useEffect(() => {
-    return () => { disconnect(); };
-  }, [disconnect]);
-
-  return { events, connected, done, connect, disconnect };
+  useEffect(() => () => abort.current?.abort(), [sessionId]);
+  return { connect, connected };
 }

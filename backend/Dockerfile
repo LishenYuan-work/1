@@ -1,4 +1,4 @@
-# 后端 Dockerfile（Railway / 任意云平台部署）
+# 后端 Dockerfile（Zeabur / 任意 Docker 平台）
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -15,10 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 应用代码
 COPY . .
 
-# 数据库（SQLite 生产不可用，这里仅用于快速测试；
-# 生产环境设置 DATABASE_URL 指向 Supabase/PostgreSQL）
-ENV DATABASE_URL=sqlite+aiosqlite:///./debate.db
+# 生产环境必须通过 DATABASE_URL 注入 Supabase PostgreSQL。
+ENV DATABASE_URL=sqlite+aiosqlite:///./review_platform.db
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
