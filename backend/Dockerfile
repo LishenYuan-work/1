@@ -1,4 +1,4 @@
-# 后端 Dockerfile（Zeabur / 任意 Docker 平台）
+# 后端 Dockerfile（Render / 任意 Docker 平台）
 FROM python:3.12-slim
 
 WORKDIR /app
