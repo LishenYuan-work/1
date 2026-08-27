@@ -50,8 +50,16 @@ async def _send_token(db: AsyncSession, user: Profile, purpose: str, subject: st
     await asyncio.to_thread(send_email, user.email, subject, f'<p>请打开链接完成操作：</p><p><a href="{settings.frontend_url}{path}?token={raw}">继续操作</a></p>')
 
 
-def _email_error() -> HTTPException:
-    return HTTPException(502, "邮件服务拒绝了发送请求，请检查 Resend 的 API Key 和已验证发件地址")
+def _email_error(error: EmailDeliveryError) -> HTTPException:
+    if error.status_code == 401:
+        detail = "Resend API Key 无效或已撤销，请在同一 Resend 账户重新创建并更新 Render 配置"
+    elif error.status_code == 403:
+        detail = "Resend 拒绝了发件请求（403），请确认 API Key 属于当前账户且发件地址/测试收件人符合 Resend 限制"
+    elif error.status_code:
+        detail = f"邮件服务返回 HTTP {error.status_code}，请检查 Resend 配置"
+    else:
+        detail = "邮件服务暂时不可用，请检查 Render 环境变量或稍后重试"
+    return HTTPException(502, detail)
 
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
@@ -87,7 +95,7 @@ async def register(req: RegisterRequest, response: Response, db: AsyncSession = 
     try:
         await _send_token(db, user, "verify_email", "验证您的评审平台邮箱", "/verify-email", timedelta(hours=24))
     except EmailDeliveryError as exc:
-        raise _email_error() from exc
+        raise _email_error(exc) from exc
     memberships = await _load_memberships(db, user.id)
     access, refresh = create_access_token(user.id, token_version=user.token_version), create_refresh_token(user.id, token_version=user.token_version)
     _set_auth_cookies(response, access, refresh)
@@ -129,7 +137,7 @@ async def resend_verification(req: EmailRequest, db: AsyncSession = Depends(get_
         try:
             await _send_token(db, user, "verify_email", "重新验证评审平台邮箱", "/verify-email", timedelta(hours=24))
         except EmailDeliveryError as exc:
-            raise _email_error() from exc
+            raise _email_error(exc) from exc
     return {"status": "sent"}
 
 
@@ -140,7 +148,7 @@ async def forgot_password(req: EmailRequest, db: AsyncSession = Depends(get_db))
         try:
             await _send_token(db, user, "reset_password", "重置评审平台密码", "/reset-password", timedelta(hours=1))
         except EmailDeliveryError as exc:
-            raise _email_error() from exc
+            raise _email_error(exc) from exc
     return {"status": "sent"}
 
 
@@ -219,7 +227,7 @@ async def invite_member(organization_id: str, req: InviteMemberRequest, user: Pr
     try:
         await asyncio.to_thread(send_email, str(req.email), "加入评审工作区", f'<p><a href="{settings.frontend_url}/register?invite={raw}">接受工作区邀请</a></p>')
     except EmailDeliveryError as exc:
-        raise _email_error() from exc
+        raise _email_error(exc) from exc
     return {"status": "sent"}
 
 
