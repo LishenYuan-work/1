@@ -1,5 +1,35 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+const FIELD_LABELS: Record<string, string> = {
+  email: "邮箱",
+  password: "密码",
+  display_name: "姓名",
+  organization_name: "组织名称",
+  topic: "调研主题",
+  max_round: "评审轮次",
+};
+
+function formatApiError(payload: unknown, fallback: string): string {
+  if (typeof payload === "string" && payload.trim()) return payload;
+  if (!payload || typeof payload !== "object") return fallback;
+
+  const detail = (payload as { detail?: unknown }).detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.map((item) => {
+      if (!item || typeof item !== "object") return String(item);
+      const issue = item as { msg?: unknown; loc?: unknown };
+      const location = Array.isArray(issue.loc)
+        ? issue.loc.find((part) => typeof part === "string" && part !== "body")
+        : undefined;
+      const label = typeof location === "string" ? FIELD_LABELS[location] || location : undefined;
+      return `${label ? `${label}：` : ""}${typeof issue.msg === "string" ? issue.msg : "请求参数无效"}`;
+    }).filter(Boolean);
+    if (messages.length) return messages.join("；");
+  }
+  return fallback;
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -33,10 +63,10 @@ async function request<T>(
           : JSON.stringify(body),
   });
   if (!response.ok) {
-    const error = await response
+    const payload = await response
       .json()
       .catch(() => ({ detail: response.statusText }));
-    throw new Error(error.detail || "请求失败");
+    throw new Error(formatApiError(payload, response.statusText || "请求失败"));
   }
   if (response.status === 204) return undefined as T;
   return response.json();
