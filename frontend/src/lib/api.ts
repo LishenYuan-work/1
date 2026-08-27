@@ -18,12 +18,20 @@ function formatApiError(payload: unknown, fallback: string): string {
   if (Array.isArray(detail)) {
     const messages = detail.map((item) => {
       if (!item || typeof item !== "object") return String(item);
-      const issue = item as { msg?: unknown; loc?: unknown };
+      const issue = item as { type?: unknown; msg?: unknown; loc?: unknown; ctx?: Record<string, unknown> };
       const location = Array.isArray(issue.loc)
         ? issue.loc.find((part) => typeof part === "string" && part !== "body")
         : undefined;
       const label = typeof location === "string" ? FIELD_LABELS[location] || location : undefined;
-      return `${label ? `${label}：` : ""}${typeof issue.msg === "string" ? issue.msg : "请求参数无效"}`;
+      let message = typeof issue.msg === "string" ? issue.msg : "请求参数无效";
+      if (issue.type === "string_too_short" && typeof issue.ctx?.min_length === "number") {
+        message = `至少需要 ${issue.ctx.min_length} 个字符`;
+      } else if (issue.type === "string_too_long" && typeof issue.ctx?.max_length === "number") {
+        message = `不能超过 ${issue.ctx.max_length} 个字符`;
+      } else if (issue.type === "missing") {
+        message = "不能为空";
+      }
+      return `${label ? `${label}：` : ""}${message}`;
     }).filter(Boolean);
     if (messages.length) return messages.join("；");
   }
