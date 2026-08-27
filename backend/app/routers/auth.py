@@ -15,7 +15,7 @@ from app.db.database import get_db
 from app.db.models import EmailToken, Organization, OrganizationInvite, OrganizationMember, Profile
 from app.dependencies import require_user
 from app.models.schemas import CreateOrganizationRequest, EmailRequest, InviteMemberRequest, LoginRequest, MemberItem, OrganizationSummary, RefreshRequest, RegisterRequest, ResetPasswordRequest, TokenRequest, TokenResponse, UserProfile
-from app.services.email_service import send_email
+from app.services.email_service import EmailDeliveryError, send_email
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 org_router = APIRouter(prefix="/api/organizations", tags=["organizations"])
@@ -50,6 +50,10 @@ async def _send_token(db: AsyncSession, user: Profile, purpose: str, subject: st
     await asyncio.to_thread(send_email, user.email, subject, f'<p>请打开链接完成操作：</p><p><a href="{settings.frontend_url}{path}?token={raw}">继续操作</a></p>')
 
 
+def _email_error() -> HTTPException:
+    return HTTPException(502, "邮件服务拒绝了发送请求，请检查 Resend 的 API Key 和已验证发件地址")
+
+
 @router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(req: RegisterRequest, response: Response, db: AsyncSession = Depends(get_db)):
     email = str(req.email).lower()
@@ -80,7 +84,10 @@ async def register(req: RegisterRequest, response: Response, db: AsyncSession = 
         db.add(OrganizationMember(organization_id=organization.id, user_id=user.id, role="owner"))
     await db.commit()
     await db.refresh(user)
-    await _send_token(db, user, "verify_email", "验证您的评审平台邮箱", "/verify-email", timedelta(hours=24))
+    try:
+        await _send_token(db, user, "verify_email", "验证您的评审平台邮箱", "/verify-email", timedelta(hours=24))
+    except EmailDeliveryError as exc:
+        raise _email_error() from exc
     memberships = await _load_memberships(db, user.id)
     access, refresh = create_access_token(user.id, token_version=user.token_version), create_refresh_token(user.id, token_version=user.token_version)
     _set_auth_cookies(response, access, refresh)
@@ -119,7 +126,10 @@ async def verify_email(req: TokenRequest, db: AsyncSession = Depends(get_db)):
 async def resend_verification(req: EmailRequest, db: AsyncSession = Depends(get_db)):
     user = await db.scalar(select(Profile).where(Profile.email == str(req.email).lower()))
     if user and not user.email_verified_at:
-        await _send_token(db, user, "verify_email", "重新验证评审平台邮箱", "/verify-email", timedelta(hours=24))
+        try:
+            await _send_token(db, user, "verify_email", "重新验证评审平台邮箱", "/verify-email", timedelta(hours=24))
+        except EmailDeliveryError as exc:
+            raise _email_error() from exc
     return {"status": "sent"}
 
 
@@ -127,7 +137,10 @@ async def resend_verification(req: EmailRequest, db: AsyncSession = Depends(get_
 async def forgot_password(req: EmailRequest, db: AsyncSession = Depends(get_db)):
     user = await db.scalar(select(Profile).where(Profile.email == str(req.email).lower()))
     if user:
-        await _send_token(db, user, "reset_password", "重置评审平台密码", "/reset-password", timedelta(hours=1))
+        try:
+            await _send_token(db, user, "reset_password", "重置评审平台密码", "/reset-password", timedelta(hours=1))
+        except EmailDeliveryError as exc:
+            raise _email_error() from exc
     return {"status": "sent"}
 
 
@@ -203,7 +216,10 @@ async def invite_member(organization_id: str, req: InviteMemberRequest, user: Pr
     invite = OrganizationInvite(organization_id=organization_id, email=str(req.email).lower(), token_hash=hash_one_time_token(raw), invited_by=user.id, expires_at=datetime.now(timezone.utc) + timedelta(hours=72))
     db.add(invite)
     await db.commit()
-    await asyncio.to_thread(send_email, str(req.email), "加入评审工作区", f'<p><a href="{settings.frontend_url}/register?invite={raw}">接受工作区邀请</a></p>')
+    try:
+        await asyncio.to_thread(send_email, str(req.email), "加入评审工作区", f'<p><a href="{settings.frontend_url}/register?invite={raw}">接受工作区邀请</a></p>')
+    except EmailDeliveryError as exc:
+        raise _email_error() from exc
     return {"status": "sent"}
 
 
