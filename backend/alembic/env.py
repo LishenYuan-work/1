@@ -6,7 +6,9 @@ from app.db.models import Base
 
 config = context.config
 alembic_url = settings.database_url.replace("+asyncpg", "+psycopg").replace("+aiosqlite", "+pysqlite")
-config.set_main_option("sqlalchemy.url", alembic_url)
+# ConfigParser uses ``%`` for interpolation, while database URLs commonly
+# contain percent-encoded password characters (for example ``%40``).
+config.set_main_option("sqlalchemy.url", alembic_url.replace("%", "%%"))
 if config.config_file_name:
     fileConfig(config.config_file_name)
 target_metadata = Base.metadata
