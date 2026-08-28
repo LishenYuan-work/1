@@ -212,6 +212,13 @@ export interface AuthResponse {
   user: UserProfile;
   token_type: string;
 }
+export interface ReviewEvent {
+  type: string;
+  session_id: string;
+  sequence: number;
+  timestamp?: string;
+  [key: string]: unknown;
+}
 export interface ReviewSummary {
   id: string;
   organization_id: string;

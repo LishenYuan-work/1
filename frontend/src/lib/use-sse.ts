@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiBase, authToken } from "./api";
+import { apiBase, authToken, type ReviewEvent } from "./api";
 
-export type ReviewEvent = { type: string; session_id: string; sequence: number; [key: string]: unknown };
+export type { ReviewEvent } from "./api";
 
 export function useReviewStream(sessionId: string | null, onEvent: (event: ReviewEvent) => void) {
   const [connected, setConnected] = useState(false);
@@ -21,8 +21,11 @@ export function useReviewStream(sessionId: string | null, onEvent: (event: Revie
     try {
       while (!controller.signal.aborted && attempt < 6) {
         try {
+          const token = authToken();
+          const headers: Record<string, string> = { "Last-Event-ID": String(last.current) };
+          if (token) headers.Authorization = `Bearer ${token}`;
           const response = await fetch(`${apiBase()}/api/reviews/${targetSessionId}/stream`, {
-            headers: { Authorization: `Bearer ${authToken() || ""}`, "Last-Event-ID": String(last.current) },
+            headers,
             credentials: "include", signal: controller.signal,
           });
           if (!response.ok || !response.body) throw new Error("SSE connection failed");
