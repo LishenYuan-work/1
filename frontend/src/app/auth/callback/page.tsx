@@ -15,7 +15,23 @@ export default function AuthCallbackPage() {
       const code = params.get("code");
       if (code) {
         const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-        if (exchangeError) { if (mounted) setError(exchangeError.message); return; }
+        if (exchangeError) {
+          if (mounted) {
+            setError(
+              exchangeError.message.includes("code verifier")
+                ? "验证链接已失效，请返回登录页重新发送验证邮件。"
+                : exchangeError.message,
+            );
+          }
+          return;
+        }
+      }
+      // With implicit flow Supabase consumes hash tokens automatically. Verify
+      // that a session exists before redirecting so a stale link is explicit.
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session && !code) {
+        if (mounted) setError("验证链接已失效，请返回登录页重新发送验证邮件。");
+        return;
       }
       router.replace(params.get("next") || "/");
     };

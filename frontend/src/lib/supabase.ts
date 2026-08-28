@@ -10,7 +10,10 @@ export const supabase: SupabaseClient | null =
           persistSession: true,
           autoRefreshToken: true,
           detectSessionInUrl: true,
-          flowType: "pkce",
+          // The app is deployed as a static client. Implicit flow keeps the
+          // confirmation session in the redirect URL instead of requiring a
+          // PKCE verifier in the same browser storage context.
+          flowType: "implicit",
         },
       })
     : null;
