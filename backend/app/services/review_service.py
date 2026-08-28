@@ -67,7 +67,7 @@ async def run_node(db, session: ReviewSession, node_name: str, messages: list[di
             if pending_size >= 512:
                 await flush_chunks()
 
-        result = await structured(messages, fallback, on_chunk=on_chunk)
+        result = _coerce_node_result(node_name, await structured(messages, fallback, on_chunk=on_chunk))
         await flush_chunks()
         _validate_node_result(node_name, result)
         db.add(ReviewTrace(session_id=session.id, node_name=node_name, duration_ms=int((time.perf_counter() - started) * 1000), prompt_tokens=sum(len(message.get("content", "")) for message in messages) // 4, completion_tokens=len(json.dumps(result, ensure_ascii=False)) // 4, model=settings.deepseek_model, status="completed"))
@@ -96,6 +96,33 @@ def _validate_node_result(node_name: str, result: dict) -> None:
         value = claim.get("claim") if isinstance(claim, dict) else claim
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{node_name} 包含空论据")
+
+
+def _coerce_node_result(node_name: str, result: dict) -> dict:
+    """Keep useful document JSON when a compatible model uses another key."""
+    if node_name != "document_parse" or (isinstance(result.get("summary"), str) and result["summary"].strip()):
+        return result
+    synthesis = result.get("synthesis")
+    sources = result.get("sources")
+    parts: list[str] = []
+    if isinstance(result.get("topic"), str) and result["topic"].strip():
+        parts.append(f"主题：{result['topic'].strip()}")
+    if isinstance(synthesis, dict):
+        for label, key in (("收益", "benefits"), ("风险", "risks"), ("实施约束", "implementation_constraints")):
+            values = synthesis.get(key)
+            if isinstance(values, list):
+                lines = [str(value).strip() for value in values if str(value).strip()]
+                if lines:
+                    parts.append(f"{label}：" + "；".join(lines))
+    if isinstance(sources, list):
+        titles = [str(item.get("title", "")).strip() for item in sources if isinstance(item, dict) and str(item.get("title", "")).strip()]
+        if titles:
+            parts.append("参考资料：" + "；".join(titles))
+    if parts:
+        normalized = dict(result)
+        normalized["summary"] = "\n".join(parts)
+        return normalized
+    return result
 
 
 async def save_output(db, session: ReviewSession, role: str, round_num: int, content: str, structured_data: dict | None = None) -> ReviewOutput:
