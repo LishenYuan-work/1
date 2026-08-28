@@ -1,6 +1,6 @@
 from app.core.security import create_one_time_token, hash_one_time_token
 from app.models.schemas import CreateReviewRequest
-from app.services.review_service import REPORT_HEADINGS, _normalize_report, _validate_node_result
+from app.services.review_service import REPORT_HEADINGS, _coerce_node_result, _normalize_report, _validate_node_result
 from app.runtime.langgraph_runtime import ReviewState, build_review_graph
 from app.routers.reviews import _safe_filename, _validate_file_signature
 
@@ -27,6 +27,19 @@ def test_invalid_agent_output_is_rejected():
         pass
     else:
         raise AssertionError("empty argument claims must fail validation")
+
+
+def test_document_synthesis_output_is_coerced_to_summary():
+    result = _coerce_node_result(
+        "document_parse",
+        {
+            "topic": "主题",
+            "synthesis": {"benefits": ["提升效率"], "risks": ["实施成本"]},
+            "sources": [{"title": "公开资料"}],
+        },
+    )
+    assert "summary" in result
+    assert "提升效率" in result["summary"]
 
 
 def test_langgraph_review_state_and_graph_compile():
