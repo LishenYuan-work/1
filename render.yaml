@@ -27,15 +27,15 @@ services:
         value: deepseek-chat
       - key: DEEPSEEK_BASE_URL
         value: https://api.deepseek.com/v1
+      - key: AUTH_PROVIDER
+        value: supabase
       - key: EMAIL_PROVIDER
-        value: resend
-      - key: RESEND_API_KEY
-        sync: false
-      - key: EMAIL_FROM
-        sync: false
+        value: supabase
       - key: STORAGE_PROVIDER
         value: supabase
       - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
