@@ -47,13 +47,22 @@ async function request<T>(
   const headers: Record<string, string> = {};
   if (org) headers["X-Organization-ID"] = org;
   if (typeof document !== "undefined" && !["GET", "HEAD", "OPTIONS"].includes(method)) {
-    const csrf = document.cookie
+    let csrf = document.cookie
       .split(";")
       .map((item) => item.trim())
       .find((item) => item.startsWith("review_csrf="))
       ?.split("=")
       .slice(1)
       .join("=");
+    // The CSRF cookie is scoped to the API origin and is not readable from
+    // the separately deployed frontend. Ask the API for the matching value.
+    if (!csrf) {
+      const csrfResponse = await fetch(`${BASE}/api/auth/csrf`, { credentials: "include" });
+      if (csrfResponse.ok) {
+        const payload = (await csrfResponse.json()) as { csrf_token?: string };
+        csrf = payload.csrf_token;
+      }
+    }
     if (csrf) headers["X-CSRF-Token"] = decodeURIComponent(csrf);
   }
   if (body instanceof FormData) {

@@ -4,7 +4,7 @@ import asyncio
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, Request
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -20,6 +20,31 @@ from app.services.supabase_auth import SupabaseAuthError, get_user as get_supaba
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 org_router = APIRouter(prefix="/api/organizations", tags=["organizations"])
+
+
+@router.get("/csrf")
+async def csrf_token(request: Request, response: Response):
+    """Expose the double-submit token to the separate frontend origin.
+
+    The cookie is intentionally readable by the browser, but a cross-origin
+    frontend cannot access cookies belonging to the API origin. Returning the
+    existing value lets the frontend send the matching header without
+    weakening CSRF validation on mutating endpoints.
+    """
+    token = request.cookies.get("review_csrf")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        secure = settings.app_env.lower() == "production"
+        response.set_cookie(
+            "review_csrf",
+            token,
+            httponly=False,
+            secure=secure,
+            samesite="none" if secure else "lax",
+            max_age=settings.refresh_token_days * 86400,
+            path="/",
+        )
+    return {"csrf_token": token}
 
 
 def _expired(value: datetime) -> bool:
