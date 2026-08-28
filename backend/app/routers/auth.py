@@ -14,8 +14,9 @@ from app.core.security import create_access_token, create_one_time_token, create
 from app.db.database import get_db
 from app.db.models import EmailToken, Organization, OrganizationInvite, OrganizationMember, Profile
 from app.dependencies import require_user
-from app.models.schemas import CreateOrganizationRequest, EmailRequest, InviteMemberRequest, LoginRequest, MemberItem, OrganizationSummary, RefreshRequest, RegisterRequest, ResetPasswordRequest, TokenRequest, TokenResponse, UserProfile
+from app.models.schemas import CreateOrganizationRequest, EmailRequest, InviteMemberRequest, LoginRequest, MemberItem, OrganizationSummary, RefreshRequest, RegisterRequest, ResetPasswordRequest, SupabaseExchangeRequest, TokenRequest, TokenResponse, UserProfile
 from app.services.email_service import EmailDeliveryError, send_email
+from app.services.supabase_auth import SupabaseAuthError, get_user as get_supabase_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 org_router = APIRouter(prefix="/api/organizations", tags=["organizations"])
@@ -111,6 +112,73 @@ async def login(req: LoginRequest, response: Response, db: AsyncSession = Depend
         raise HTTPException(403, "邮箱尚未验证，请先验证邮箱")
     memberships = await _load_memberships(db, user.id)
     access, refresh = create_access_token(user.id, req.remember_me, user.token_version), create_refresh_token(user.id, user.token_version)
+    _set_auth_cookies(response, access, refresh)
+    return _profile_response(user, memberships)
+
+
+@router.post("/supabase/exchange", response_model=TokenResponse)
+async def exchange_supabase_session(req: SupabaseExchangeRequest, response: Response, db: AsyncSession = Depends(get_db)):
+    """Exchange a verified Supabase session for the platform's existing cookies."""
+    try:
+        remote_user = await asyncio.to_thread(get_supabase_user, req.access_token)
+    except SupabaseAuthError as exc:
+        raise HTTPException(401, "Supabase 登录会话无效或已过期") from exc
+
+    supabase_id = str(remote_user["id"])
+    email = str(remote_user["email"]).lower()
+    confirmed_at = remote_user.get("email_confirmed_at") or remote_user.get("confirmed_at")
+    if not confirmed_at:
+        raise HTTPException(403, "邮箱尚未验证，请先完成 Supabase 邮箱验证")
+    verified_at = datetime.now(timezone.utc)
+    if isinstance(confirmed_at, str):
+        try:
+            verified_at = datetime.fromisoformat(confirmed_at.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    metadata = remote_user.get("user_metadata") if isinstance(remote_user.get("user_metadata"), dict) else {}
+    display_name = req.display_name or metadata.get("display_name") or metadata.get("full_name")
+    user = await db.get(Profile, supabase_id)
+    if not user:
+        user = await db.scalar(select(Profile).where(Profile.email == email))
+    if user:
+        user.email = email
+        user.email_verified_at = user.email_verified_at or verified_at
+        if display_name and not user.display_name:
+            user.display_name = str(display_name)[:100]
+    else:
+        user = Profile(
+            id=supabase_id,
+            email=email,
+            password_hash=None,
+            display_name=str(display_name)[:100] if display_name else email.split("@")[0],
+            email_verified_at=verified_at,
+        )
+        db.add(user)
+        await db.flush()
+
+    memberships = await _load_memberships(db, user.id)
+    if not memberships and req.invite_token:
+        invited = await db.scalar(select(OrganizationInvite).where(OrganizationInvite.token_hash == hash_one_time_token(req.invite_token), OrganizationInvite.accepted_at.is_(None)))
+        if not invited or _expired(invited.expires_at) or invited.email != email:
+            raise HTTPException(400, "工作区邀请无效或已过期")
+        consumed = await db.execute(update(OrganizationInvite).where(OrganizationInvite.id == invited.id, OrganizationInvite.accepted_at.is_(None), OrganizationInvite.expires_at > datetime.now(timezone.utc)).values(accepted_at=datetime.now(timezone.utc)))
+        if consumed.rowcount != 1:
+            raise HTTPException(400, "工作区邀请无效或已使用")
+        db.add(OrganizationMember(organization_id=invited.organization_id, user_id=user.id, role="member"))
+        await db.commit()
+        memberships = await _load_memberships(db, user.id)
+    elif not memberships:
+        organization_name = req.organization_name or metadata.get("organization_name") or f"{user.display_name or email} 的工作区"
+        organization = Organization(name=str(organization_name)[:120], created_by=user.id)
+        db.add(organization)
+        await db.flush()
+        db.add(OrganizationMember(organization_id=organization.id, user_id=user.id, role="owner"))
+        await db.commit()
+        memberships = await _load_memberships(db, user.id)
+    else:
+        await db.commit()
+    await db.refresh(user)
+    access, refresh = create_access_token(user.id, token_version=user.token_version), create_refresh_token(user.id, token_version=user.token_version)
     _set_auth_cookies(response, access, refresh)
     return _profile_response(user, memberships)
 

@@ -6,7 +6,7 @@
 
 - 后端：FastAPI、SQLAlchemy Async、SSE、JWT、PostgreSQL/Supabase Storage 适配
 - 前端：Next.js 16、React 19、TypeScript、Tailwind CSS 4
-- 认证：邮箱密码、邮箱验证、密码重置、组织 owner 邀请成员
+- 认证：Supabase Auth 邮箱密码、邮箱验证、密码重置；组织 owner 邀请成员
 - 输入：主题或最多 5 个 PDF/DOCX，单文件 20 MB
 - 评审：1 至 5 轮，默认 3 轮；收益与风险交替输出，事实核查写入证据池
 - 报告：固定五段式 Markdown，支持鉴权下载
@@ -25,11 +25,11 @@ npm install
 npm run dev
 ```
 
-开发环境默认使用 SQLite、本地文件存储和控制台邮件。控制台会打印验证和邀请链接。生产环境建议使用 Supabase PostgreSQL/Storage、Resend 和随机 JWT secret。
+开发环境默认使用 SQLite、本地文件存储和控制台邮件。启用 Supabase Auth 后，注册、验证和重置邮件由 Supabase Auth 发送；生产环境需在 Supabase Auth 中配置站点 URL 和 Redirect URL。
 
 ## Vercel + Render 部署
 
-生产拓扑：Vercel 托管 Next.js 前端，Render 托管 `backend/` Docker 服务，Supabase 提供 PostgreSQL 和私有 Storage，Resend 发送验证/邀请邮件。
+生产拓扑：Vercel 托管 Next.js 前端，Render 托管 `backend/` Docker 服务，Supabase 提供 PostgreSQL、Auth 和私有 Storage。后端用 Supabase Session 换发已有 HttpOnly JWT Cookie，组织与评审接口保持不变。
 
 ### 1. 创建 Supabase 资源
 
@@ -53,11 +53,11 @@ JWT_SECRET=<随机的长字符串>
 DEEPSEEK_API_KEY=<DeepSeek key>
 DEEPSEEK_MODEL=deepseek-chat
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-EMAIL_PROVIDER=resend
-RESEND_API_KEY=<Resend key>
-EMAIL_FROM=Review Platform <noreply@your-domain.example>
+AUTH_PROVIDER=supabase
+EMAIL_PROVIDER=supabase
 STORAGE_PROVIDER=supabase
 SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_ANON_KEY=<anon key>
 SUPABASE_SERVICE_ROLE_KEY=<service role key>
 SUPABASE_STORAGE_BUCKET=review-documents
 REVIEW_RUNTIME=custom
@@ -71,6 +71,11 @@ MAX_UPLOAD_BYTES=20971520
 alembic upgrade head
 ```
 
+启用 Supabase Auth：在 Supabase **Authentication → URL Configuration** 设置
+`Site URL=https://<your-app>.vercel.app`，并添加
+`https://<your-app>.vercel.app/auth/callback` 为 Redirect URL。邮箱 Provider 的
+Confirm email 开关按安全要求配置；生产环境建议保持开启。
+
 5. 用 `https://<render-domain>/api/health` 检查服务。自定义域名后，将新的前端域名同步更新到 `FRONTEND_URL` 并重新部署。
 
 ### 3. 部署 Vercel 前端
@@ -80,6 +85,8 @@ alembic upgrade head
 
 ```text
 NEXT_PUBLIC_API_URL=https://<your-render-service>.onrender.com
+NEXT_PUBLIC_SUPABASE_URL=https://<project>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 ```
 
 3. 部署后打开前端注册页，验证注册、邮件验证、登录和新建评审流程。若使用自定义域名，必须同时更新 Render 的 `FRONTEND_URL`。

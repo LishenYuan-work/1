@@ -33,6 +33,7 @@ async def csrf_middleware(request, call_next):
         exempt = {
             "/api/auth/login", "/api/auth/register", "/api/auth/verify-email",
             "/api/auth/resend-verification", "/api/auth/forgot-password", "/api/auth/reset-password",
+            "/api/auth/supabase/exchange",
         }
         if request.url.path not in exempt:
             expected = request.cookies.get("review_csrf")

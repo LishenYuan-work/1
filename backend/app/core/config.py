@@ -28,10 +28,12 @@ class Settings(BaseSettings):
     email_provider: str = "console"
     resend_api_key: str = ""
     email_from: str = "Review Platform <noreply@example.com>"
+    auth_provider: str = "custom"
 
     storage_provider: str = "local"
     local_storage_path: str = ".data/uploads"
     supabase_url: str = ""
+    supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "review-documents"
 
@@ -56,8 +58,11 @@ class Settings(BaseSettings):
                 raise ValueError("生产环境必须使用 PostgreSQL DATABASE_URL")
             if self.storage_provider != "supabase" or not self.supabase_url or not self.supabase_service_role_key:
                 raise ValueError("生产环境必须配置 Supabase Storage")
-            if self.email_provider != "resend" or not self.resend_api_key:
-                raise ValueError("生产环境必须配置 Resend")
+            if self.auth_provider.lower() == "supabase":
+                if not self.supabase_url or not (self.supabase_anon_key or self.supabase_service_role_key):
+                    raise ValueError("Supabase Auth 需要配置 SUPABASE_URL 和密钥")
+            elif self.email_provider != "resend" or not self.resend_api_key:
+                raise ValueError("生产环境必须配置 Resend 或启用 Supabase Auth")
             if self.review_runtime == "langgraph" and not self.database_url.startswith("postgresql"):
                 raise ValueError("LangGraph 生产运行时必须使用 PostgreSQL checkpoint")
             if self.rate_limit_backend == "database" and self.database_url.startswith("sqlite"):

@@ -86,6 +86,12 @@ export const api = {
       request<AuthResponse>("POST", "/api/auth/register", body),
     login: (body: { email: string; password: string; remember_me: boolean }) =>
       request<AuthResponse>("POST", "/api/auth/login", body),
+    supabaseExchange: (body: {
+      access_token: string;
+      display_name?: string;
+      organization_name?: string;
+      invite_token?: string;
+    }) => request<AuthResponse>("POST", "/api/auth/supabase/exchange", body),
     verify: (token: string) =>
       request<{ status: string }>("POST", "/api/auth/verify-email", { token }),
     resend: (email: string) =>

@@ -41,6 +41,13 @@ class TokenResponse(BaseModel):
     user: UserProfile
 
 
+class SupabaseExchangeRequest(BaseModel):
+    access_token: str = Field(min_length=20)
+    display_name: str | None = Field(default=None, max_length=100)
+    organization_name: str | None = Field(default=None, min_length=2, max_length=120)
+    invite_token: str | None = None
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str | None = None
 
