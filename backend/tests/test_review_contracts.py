@@ -3,6 +3,7 @@ from app.models.schemas import CreateReviewRequest
 from app.services.review_service import REPORT_HEADINGS, _coerce_node_result, _normalize_report, _validate_node_result
 from app.runtime.langgraph_runtime import ReviewState, build_review_graph
 from app.routers.reviews import _safe_filename, _validate_file_signature
+from app.core.web_search import filter_relevant_results
 
 
 def test_one_time_token_hash_round_trip():
@@ -40,6 +41,20 @@ def test_document_synthesis_output_is_coerced_to_summary():
     )
     assert "summary" in result
     assert "提升效率" in result["summary"]
+
+
+def test_topic_search_filters_unrelated_results_but_keeps_matching_sources():
+    results = [
+        {"title": "Mercedes-Benz 车型技术讨论", "body": "发动机和底盘参数", "url": "https://example.com/car"},
+        {"title": "企业知识库升级实践", "body": "企业知识库检索与权限管理", "url": "https://example.com/kb"},
+    ]
+    filtered = filter_relevant_results("企业知识库升级", results)
+    assert [item["url"] for item in filtered] == ["https://example.com/kb"]
+
+
+def test_topic_search_without_relevant_sources_returns_empty():
+    results = [{"title": "车型论坛", "body": "发动机参数讨论", "url": "https://example.com/car"}]
+    assert filter_relevant_results("企业知识库升级", results) == []
 
 
 def test_argument_claims_only_output_is_coerced_to_summary():

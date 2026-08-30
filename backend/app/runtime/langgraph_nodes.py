@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from app.db.database import async_session
 from app.db.models import EvidenceItem, ReviewOutput, ReviewReport, ReviewSession
 from app.services.review_service import _fallback_report, _normalize_report, emit, fact_check_output, run_node, save_output, update_stage
-from app.core.web_search import format_search_results, search_web
+from app.core.web_search import filter_relevant_results, format_search_results, search_web
 
 
 def _search_claims(query: str, max_results: int = 3) -> list[dict]:
@@ -49,9 +49,20 @@ async def document_parse_node(state: dict[str, Any]) -> dict[str, Any]:
         text = _text_for_session(session)
         if not session.documents and session.topic:
             initial_sources = await asyncio.to_thread(search_web, session.topic[:180], 5)
-            text = f"主题：{session.topic}\n\n初步公开资料：\n{format_search_results(initial_sources)}"
+            relevant_sources = filter_relevant_results(session.topic, initial_sources)
+            source_text = format_search_results(relevant_sources) if relevant_sources else "（未找到与主题直接相关的公开资料；请仅基于主题生成初步整理，不要因资料为空而报错。）"
+            text = f"主题：{session.topic}\n\n初步公开资料：\n{source_text}"
         fallback = {"summary": text[:2000] or "尚未提供文档，以下基于主题进行初步资料整理。", "claims": []}
-        result = await run_node(db, session, "document_parse", [{"role": "system", "content": "你是文档解析 Agent。只返回 JSON。"}, {"role": "user", "content": text[:12000]}], fallback)
+        parse_messages = [
+            {"role": "system", "content": "你是文档解析 Agent。只返回 JSON。没有上传文档或没有相关公开资料时，必须基于主题生成简短 summary，不要返回错误或拒绝继续。"},
+            {"role": "user", "content": text[:12000]},
+        ]
+        try:
+            result = await run_node(db, session, "document_parse", parse_messages, fallback)
+        except Exception:
+            if session.documents or not session.topic:
+                raise
+            result = fallback
         output = await save_output(db, session, "document_parse", 0, result.get("summary", fallback["summary"]), result)
         return {"doc_content": text, "history": [{"agent": "document_parse", "output_id": output.id}], "topic": session.topic or ""}
 

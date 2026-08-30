@@ -1,5 +1,7 @@
 """联网搜索模块 — 为事实核查提供实时证据"""
 
+import re
+
 from ddgs import DDGS
 
 
@@ -63,3 +65,30 @@ def format_search_results(results: list[dict]) -> str:
     for i, r in enumerate(results[:15], 1):
         lines.append(f"[{i}] {r['title']}\n    {r['body'][:200]}\n    来源: {r.get('url', 'N/A')}")
     return "\n\n".join(lines)
+
+
+def filter_relevant_results(query: str, results: list[dict], min_score: int = 1) -> list[dict]:
+    """Drop obviously unrelated results before sending topic research to an agent.
+
+    Search providers occasionally return a successful response for a completely
+    different query. Keeping those results in the document-parse prompt makes
+    the model reject an otherwise valid topic. This deliberately conservative
+    filter only removes results with no shared Chinese bigram or word token; it
+    never invents or rewrites a source URL.
+    """
+    query = (query or "").strip().lower()
+    if not query:
+        return []
+    chinese_runs = re.findall(r"[\u4e00-\u9fff]+", query)
+    query_terms = {run[i : i + 2] for run in chinese_runs for i in range(max(0, len(run) - 1))}
+    query_terms.update(re.findall(r"[a-z0-9]{3,}", query))
+    if not query_terms:
+        return results
+
+    relevant: list[dict] = []
+    for item in results:
+        haystack = " ".join(str(item.get(key, "")) for key in ("title", "body", "snippet")).lower()
+        score = sum(1 for term in query_terms if term in haystack)
+        if score >= min_score:
+            relevant.append(item)
+    return relevant
