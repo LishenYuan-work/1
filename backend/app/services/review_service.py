@@ -99,14 +99,30 @@ def _validate_node_result(node_name: str, result: dict) -> None:
 
 
 def _coerce_node_result(node_name: str, result: dict) -> dict:
-    """Keep useful document JSON when a compatible model uses another key."""
-    if node_name != "document_parse" or (isinstance(result.get("summary"), str) and result["summary"].strip()):
+    """Normalize common compatible model variants before strict validation."""
+    if not isinstance(result, dict):
         return result
-    synthesis = result.get("synthesis")
-    sources = result.get("sources")
+    normalized = dict(result)
+    if node_name in {"benefit_argument", "risk_argument"}:
+        summary = normalized.get("summary")
+        claims = normalized.get("claims")
+        if (not isinstance(summary, str) or not summary.strip()) and isinstance(claims, list):
+            claim_lines = []
+            for claim in claims:
+                value = claim.get("claim") if isinstance(claim, dict) else claim
+                if isinstance(value, str) and value.strip():
+                    claim_lines.append(value.strip())
+            if claim_lines:
+                label = "收益论据" if node_name == "benefit_argument" else "风险论据"
+                normalized["summary"] = f"{label}：" + "；".join(claim_lines[:12])
+        return normalized
+    if node_name != "document_parse" or (isinstance(normalized.get("summary"), str) and normalized["summary"].strip()):
+        return normalized
+    synthesis = normalized.get("synthesis")
+    sources = normalized.get("sources")
     parts: list[str] = []
-    if isinstance(result.get("topic"), str) and result["topic"].strip():
-        parts.append(f"主题：{result['topic'].strip()}")
+    if isinstance(normalized.get("topic"), str) and normalized["topic"].strip():
+        parts.append(f"主题：{normalized['topic'].strip()}")
     if isinstance(synthesis, dict):
         for label, key in (("收益", "benefits"), ("风险", "risks"), ("实施约束", "implementation_constraints")):
             values = synthesis.get(key)
@@ -119,7 +135,6 @@ def _coerce_node_result(node_name: str, result: dict) -> dict:
         if titles:
             parts.append("参考资料：" + "；".join(titles))
     if parts:
-        normalized = dict(result)
         normalized["summary"] = "\n".join(parts)
         return normalized
     return result

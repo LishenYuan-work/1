@@ -42,6 +42,15 @@ def test_document_synthesis_output_is_coerced_to_summary():
     assert "提升效率" in result["summary"]
 
 
+def test_argument_claims_only_output_is_coerced_to_summary():
+    result = _coerce_node_result(
+        "benefit_argument",
+        {"claims": ["降低人工处理成本", "缩短交付周期"]},
+    )
+    _validate_node_result("benefit_argument", result)
+    assert result["summary"].startswith("收益论据：")
+
+
 def test_langgraph_review_state_and_graph_compile():
     state: ReviewState = {"topic": "主题", "max_round": 1, "current_round": 0, "session_id": "s"}
     assert state["max_round"] == 1
