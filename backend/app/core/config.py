@@ -82,6 +82,11 @@ class Settings(BaseSettings):
         patterns = [] if self.app_env.lower() == "production" else [r"http://localhost:\d+"]
         if self.frontend_url:
             patterns.append(re.escape(self.frontend_url.rstrip("/")))
+        # Vercel creates a unique preview hostname for each branch deployment.
+        # Keep the allow-list limited to this project's review branch so preview
+        # builds can authenticate without opening CORS to arbitrary origins.
+        if self.app_env.lower() == "production":
+            patterns.append(r"https://1-git-refactor-review-[a-z0-9-]+\.vercel\.app")
         return r"^(" + "|".join(patterns) + r")$"
 
 
