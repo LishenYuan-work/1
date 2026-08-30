@@ -51,6 +51,12 @@ def test_argument_claims_only_output_is_coerced_to_summary():
     assert result["summary"].startswith("收益论据：")
 
 
+def test_summary_report_alias_is_coerced_to_markdown():
+    result = _coerce_node_result("summary_report", {"report": "## 方案概述\n内容"})
+    _validate_node_result("summary_report", result)
+    assert result["markdown"].startswith("## 方案概述")
+
+
 def test_langgraph_review_state_and_graph_compile():
     state: ReviewState = {"topic": "主题", "max_round": 1, "current_round": 0, "session_id": "s"}
     assert state["max_round"] == 1

@@ -50,6 +50,7 @@ async def run_node(db, session: ReviewSession, node_name: str, messages: list[di
     started = time.perf_counter()
     pending_chunks: list[str] = []
     pending_size = 0
+    fallback_used = False
 
     async def flush_chunks() -> None:
         nonlocal pending_size
@@ -67,10 +68,18 @@ async def run_node(db, session: ReviewSession, node_name: str, messages: list[di
             if pending_size >= 512:
                 await flush_chunks()
 
-        result = _coerce_node_result(node_name, await structured(messages, fallback, on_chunk=on_chunk))
+        try:
+            result = _coerce_node_result(node_name, await structured(messages, fallback, on_chunk=on_chunk))
+            _validate_node_result(node_name, result)
+        except Exception:
+            # A report assembled from persisted outputs and evidence is safer
+            # than failing after all argument and fact-check stages completed.
+            if node_name != "summary_report" or not isinstance(fallback.get("markdown"), str) or not fallback["markdown"].strip():
+                raise
+            result = fallback
+            fallback_used = True
         await flush_chunks()
-        _validate_node_result(node_name, result)
-        db.add(ReviewTrace(session_id=session.id, node_name=node_name, duration_ms=int((time.perf_counter() - started) * 1000), prompt_tokens=sum(len(message.get("content", "")) for message in messages) // 4, completion_tokens=len(json.dumps(result, ensure_ascii=False)) // 4, model=settings.deepseek_model, status="completed"))
+        db.add(ReviewTrace(session_id=session.id, node_name=node_name, duration_ms=int((time.perf_counter() - started) * 1000), prompt_tokens=sum(len(message.get("content", "")) for message in messages) // 4, completion_tokens=len(json.dumps(result, ensure_ascii=False)) // 4, model=settings.deepseek_model, status="fallback" if fallback_used else "completed", error_message="模型报告格式无效，已使用持久化证据生成兜底报告" if fallback_used else None))
         await db.commit()
         return result
     except Exception as exc:
@@ -103,6 +112,14 @@ def _coerce_node_result(node_name: str, result: dict) -> dict:
     if not isinstance(result, dict):
         return result
     normalized = dict(result)
+    if node_name == "summary_report":
+        if not isinstance(normalized.get("markdown"), str) or not normalized["markdown"].strip():
+            for key in ("report", "content", "text"):
+                value = normalized.get(key)
+                if isinstance(value, str) and value.strip():
+                    normalized["markdown"] = value
+                    break
+        return normalized
     if node_name in {"benefit_argument", "risk_argument"}:
         summary = normalized.get("summary")
         claims = normalized.get("claims")
