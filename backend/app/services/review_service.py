@@ -193,6 +193,13 @@ async def fact_check_output(db, session: ReviewSession, output: ReviewOutput, ro
                 db.add(EvidenceSource(evidence_id=evidence.id, title=result.get("title", "检索来源"), url=result["url"], snippet=result.get("body")))
         await db.commit()
         await emit(db, session, "evidence_upsert", {"agent": "fact_check", "round": round_num, "evidence_id": evidence.id, "claim": claim, "verdict": verdict, "source_count": sum(1 for item in results if item.get("url", "").startswith(("http://", "https://")))})
+    # Fact-checking does not create a ReviewOutput row, so publish an explicit
+    # completion event for the activity timeline and reconnecting clients.
+    await emit(db, session, "agent_result", {
+        "agent": "fact_check",
+        "round": round_num,
+        "content": f"已完成第 {round_num} 轮论据核查，共处理 {len([claim for claim in claims if claim.strip()])} 条论据。",
+    })
 
 
 async def _classify_claim(claim: str, results: list[dict]) -> tuple[str, str]:
@@ -281,6 +288,10 @@ async def run_review_background(session_id: str) -> None:
                     evidence_payload.append({"claim": item.claim_text, "verdict": item.verdict, "rationale": item.rationale, "sources": [{"title": source.title, "url": source.url} for source in sources]})
                 summary = await run_node(db, session, "summary_report", [{"role": "system", "content": "你是汇总评审 Agent。只能使用给定输出和证据，禁止编造来源。输出 JSON，markdown 必须严格按给定五个标题和顺序。"}, {"role": "user", "content": json.dumps({"topic": session.topic, "outputs": [o.content_markdown for o in outputs], "evidence": evidence_payload}, ensure_ascii=False)}], report_fallback)
                 markdown = _normalize_report(summary["markdown"], session, evidence)
+                # Persist the summary stage as an output too. This keeps the
+                # activity panel consistent after a page reload, when there is
+                # no in-memory SSE history available to infer its status.
+                await save_output(db, session, "summary_report", session.max_round, markdown, summary)
                 db.add(ReviewReport(session_id=session.id, markdown=markdown))
                 session.status, session.current_stage, session.completed_at = "completed", "completed", datetime.now(timezone.utc)
                 await db.commit()

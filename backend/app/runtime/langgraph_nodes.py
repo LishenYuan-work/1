@@ -147,6 +147,7 @@ async def summary_report_node(state: dict[str, Any]) -> dict[str, Any]:
         fallback = {"markdown": _fallback_report(session, outputs, evidence)}
         result = await run_node(db, session, "summary_report", [{"role": "system", "content": "你是汇总评审 Agent。输出 JSON，markdown 必须严格包含五个指定二级标题。"}, {"role": "user", "content": json.dumps({"topic": session.topic, "outputs": [item.content_markdown for item in outputs], "evidence": [item.claim_text for item in evidence]}, ensure_ascii=False)}], fallback)
         markdown = _normalize_report(result.get("markdown", fallback["markdown"]))
+        await save_output(db, session, "summary_report", session.max_round, markdown, result)
         db.add(ReviewReport(session_id=session.id, markdown=markdown))
         session.status, session.current_stage, session.completed_at = "completed", "completed", datetime.now(timezone.utc)
         await db.commit()
