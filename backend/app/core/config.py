@@ -90,7 +90,9 @@ class Settings(BaseSettings):
             # This project is deployed under the `1` Vercel project slug, so
             # permit only its generated hosts; other Vercel projects remain
             # rejected unless explicitly listed through FRONTEND_URL.
-            patterns.append(r"https://1(?:-git-refactor-review)?-[a-z0-9-]+\.vercel\.app")
+            patterns.append(
+                r"https://(?:1\.vercel\.app|1-git-refactor-review\.vercel\.app|1(?:-git-refactor-review)?-[a-z0-9-]+\.vercel\.app)"
+            )
         return r"^(" + "|".join(patterns) + r")$"
 
 
