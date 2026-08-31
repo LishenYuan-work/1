@@ -30,7 +30,13 @@ services:
       - key: AUTH_PROVIDER
         value: supabase
       - key: EMAIL_PROVIDER
-        value: supabase
+        # Supabase Auth handles signup/password emails. Organization invites
+        # are sent by the backend adapter and therefore still require Resend.
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: "Review Platform <onboarding@resend.dev>"
       - key: STORAGE_PROVIDER
         value: supabase
       - key: SUPABASE_URL

@@ -4,6 +4,8 @@ from app.services.review_service import REPORT_HEADINGS, _coerce_node_result, _n
 from app.runtime.langgraph_runtime import ReviewState, build_review_graph
 from app.routers.reviews import _safe_filename, _validate_file_signature
 from app.core.web_search import filter_relevant_results
+from app.core.config import settings
+from app.services.email_service import EmailDeliveryError, send_email
 
 
 def test_one_time_token_hash_round_trip():
@@ -87,3 +89,13 @@ def test_upload_filename_is_confined_to_basename_and_signature_is_checked():
         assert getattr(exc, "status_code", None) == 400
     else:
         raise AssertionError("invalid PDF signature must be rejected")
+
+
+def test_supabase_email_provider_does_not_silently_drop_invites(monkeypatch):
+    monkeypatch.setattr(settings, "email_provider", "supabase")
+    try:
+        send_email("member@example.com", "邀请", "<p>邀请</p>")
+    except EmailDeliveryError as exc:
+        assert "EMAIL_PROVIDER" in str(exc)
+    else:
+        raise AssertionError("unsupported Supabase email provider must fail explicitly")

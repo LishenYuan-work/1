@@ -57,9 +57,10 @@ def _profile_response(user: Profile, memberships: list[OrganizationMember]) -> T
     return TokenResponse(user=UserProfile(id=user.id, email=user.email, display_name=user.display_name, email_verified=bool(user.email_verified_at), organizations=orgs, created_at=str(user.created_at)))
 
 
-def _set_auth_cookies(response: Response, access: str, refresh: str) -> None:
+def _set_auth_cookies(response: Response, access: str, refresh: str, *, remember_me: bool = False) -> None:
     secure = settings.app_env.lower() == "production"
-    response.set_cookie("review_access", access, httponly=True, secure=secure, samesite="none" if secure else "lax", max_age=settings.access_token_minutes * 60, path="/")
+    access_max_age = (settings.refresh_token_days * 24 * 60 if remember_me else settings.access_token_minutes) * 60
+    response.set_cookie("review_access", access, httponly=True, secure=secure, samesite="none" if secure else "lax", max_age=access_max_age, path="/")
     response.set_cookie("review_refresh", refresh, httponly=True, secure=secure, samesite="none" if secure else "lax", max_age=settings.refresh_token_days * 86400, path="/api/auth")
     response.set_cookie("review_csrf", secrets.token_urlsafe(32), httponly=False, secure=secure, samesite="none" if secure else "lax", max_age=settings.refresh_token_days * 86400, path="/")
 
@@ -131,13 +132,16 @@ async def register(req: RegisterRequest, response: Response, db: AsyncSession = 
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
     user = await db.scalar(select(Profile).where(Profile.email == str(req.email).lower()))
-    if not user or not verify_password(req.password, user.password_hash):
+    # Supabase-managed profiles intentionally have no local password hash.
+    # Treat them as invalid credentials instead of passing None to passlib,
+    # which would surface an internal 500 error.
+    if not user or not user.password_hash or not verify_password(req.password, user.password_hash):
         raise HTTPException(401, "邮箱或密码错误")
     if not user.email_verified_at:
         raise HTTPException(403, "邮箱尚未验证，请先验证邮箱")
     memberships = await _load_memberships(db, user.id)
     access, refresh = create_access_token(user.id, req.remember_me, user.token_version), create_refresh_token(user.id, user.token_version)
-    _set_auth_cookies(response, access, refresh)
+    _set_auth_cookies(response, access, refresh, remember_me=req.remember_me)
     return _profile_response(user, memberships)
 
 

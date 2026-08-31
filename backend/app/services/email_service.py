@@ -16,7 +16,8 @@ class EmailDeliveryError(RuntimeError):
 
 
 def send_email(to: str, subject: str, html: str) -> None:
-    if settings.email_provider == "resend":
+    provider = settings.email_provider.lower().strip()
+    if provider == "resend":
         if not settings.resend_api_key:
             raise EmailDeliveryError("RESEND_API_KEY is not configured")
         payload = json.dumps({"from": settings.email_from, "to": [to], "subject": subject, "html": html}).encode()
@@ -42,4 +43,9 @@ def send_email(to: str, subject: str, html: str) -> None:
             ) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise EmailDeliveryError("email provider is unreachable") from exc
-    print(f"[email:{to}] {subject}\n{html}")
+    if provider == "console":
+        print(f"[email:{to}] {subject}\n{html}")
+        return
+    if provider == "supabase":
+        raise EmailDeliveryError("Supabase Auth 不负责组织邀请邮件，请将 EMAIL_PROVIDER 设置为 resend")
+    raise EmailDeliveryError(f"不支持的邮件服务商：{settings.email_provider}")
