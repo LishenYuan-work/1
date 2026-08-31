@@ -1,4 +1,18 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// The deployed frontend must never try to call the visitor's own localhost.
+// Keep localhost convenient for local development, while using the public API
+// as a production fallback when Vercel variables were not injected.
+const configuredBase = process.env.NEXT_PUBLIC_API_URL?.trim();
+const BASE = (configuredBase || (
+  process.env.NODE_ENV === "production"
+    ? "https://review-platform-api.onrender.com"
+    : "http://localhost:8000"
+)).replace(/\/$/, "");
+
+function connectionError(): Error {
+  return new Error(
+    `无法连接评审服务（${BASE}）。请检查后端是否在线，或联系管理员确认 NEXT_PUBLIC_API_URL 配置。`,
+  );
+}
 
 const FIELD_LABELS: Record<string, string> = {
   email: "邮箱",
@@ -57,7 +71,12 @@ async function request<T>(
     // The CSRF cookie is scoped to the API origin and is not readable from
     // the separately deployed frontend. Ask the API for the matching value.
     if (!csrf) {
-      const csrfResponse = await fetch(`${BASE}/api/auth/csrf`, { credentials: "include" });
+      let csrfResponse: Response;
+      try {
+        csrfResponse = await fetch(`${BASE}/api/auth/csrf`, { credentials: "include" });
+      } catch {
+        throw connectionError();
+      }
       if (csrfResponse.ok) {
         const payload = (await csrfResponse.json()) as { csrf_token?: string };
         csrf = payload.csrf_token;
@@ -68,17 +87,22 @@ async function request<T>(
   if (body instanceof FormData) {
     /* browser sets multipart boundary */
   } else if (body !== undefined) headers["Content-Type"] = "application/json";
-  const response = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    credentials: "include",
-    body:
-      body instanceof FormData
-        ? body
-        : body === undefined
-          ? undefined
-          : JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method,
+      headers,
+      credentials: "include",
+      body:
+        body instanceof FormData
+          ? body
+          : body === undefined
+            ? undefined
+            : JSON.stringify(body),
+    });
+  } catch {
+    throw connectionError();
+  }
   if (!response.ok) {
     const payload = await response
       .json()
