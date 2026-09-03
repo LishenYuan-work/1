@@ -238,6 +238,7 @@ export interface UserProfile {
   email_verified: boolean;
   organizations: Organization[];
   created_at: string;
+  is_guest?: boolean;
 }
 export interface AuthResponse {
   access_token?: string;

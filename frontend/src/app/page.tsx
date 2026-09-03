@@ -83,6 +83,7 @@ function estimateReviewMinutes(roundCount: number) {
 
 export default function HomePage() {
   const { user, loading, logout } = useAuth();
+  const guest = Boolean(user?.is_guest);
   const [view, setView] = useState<ViewKey>("review");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [organization, setOrganization] = useState("");
@@ -108,11 +109,12 @@ export default function HomePage() {
   const [preferenceMessage, setPreferenceMessage] = useState("");
   const selectedRef = useRef<ReviewDetail | null>(null);
   const orgRef = useRef<string | undefined>(undefined);
+  const guestRunRef = useRef(0);
   const activeOrg = useMemo(() => user?.organizations.find((item) => item.id === organization) || user?.organizations[0], [organization, user]);
 
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   useEffect(() => { orgRef.current = activeOrg?.id; }, [activeOrg?.id]);
-  useEffect(() => { if (activeOrg) api.reviews.list(activeOrg.id).then(setReviews).catch((err) => setError(err.message)); }, [activeOrg]);
+  useEffect(() => { if (activeOrg && !guest) api.reviews.list(activeOrg.id).then(setReviews).catch((err) => setError(err.message)); }, [activeOrg, guest]);
 
   const onEvent = useCallback((event: ReviewEvent) => {
     setEvents((previous) => [...previous.filter((item) => item.sequence !== event.sequence), event]);
@@ -131,8 +133,47 @@ export default function HomePage() {
   function showView(nextView: ViewKey) { setView(nextView); setMobileMenuOpen(false); setError(""); }
   function loadSample(sample: (typeof sampleMaterials)[number]) { setTopic(sample.topic); setNotice(`已载入示例材料：${sample.title}`); setView("review"); setMobileMenuOpen(false); window.setTimeout(() => setNotice(""), 3200); }
 
+  async function createGuestReview() {
+    if (!topic.trim() && files.length === 0) { setError("请输入调研主题或选择示例材料"); return; }
+    const run = ++guestRunRef.current;
+    const id = `guest-${Date.now()}`;
+    const startedAt = new Date().toISOString();
+    const initial: ReviewDetail = { id, organization_id: "guest", topic: topic.trim() || `游客示例评审（${files.map((file) => file.name).join("、")})`, max_round: rounds, current_round: 0, current_stage: "queued", status: "running", document_count: files.length, evidence_count: 0, creator_id: "guest", creator_name: "游客体验", created_at: startedAt, updated_at: startedAt, documents: [], outputs: [], report_markdown: null, error_message: null };
+    setSelected(initial); selectedRef.current = initial; setReviews([]); setEvidence([]); setEvents([]); setStreamContent({}); setError(""); setNotice("游客模式仅在当前页面运行，不会保存评审记录");
+    let sequence = 0;
+    const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+    const update = (changes: Partial<ReviewDetail>) => setSelected((previous) => previous && previous.id === id ? { ...previous, ...changes, updated_at: new Date().toISOString() } : previous);
+    const emitGuest = (type: string, payload: Record<string, unknown>) => { const event = { type, session_id: id, sequence: ++sequence, timestamp: new Date().toISOString(), ...payload } as ReviewEvent; setEvents((previous) => [...previous, event]); return event; };
+    const output = (agent_role: string, round_num: number, content_markdown: string, structured_data: Record<string, unknown> = {}) => ({ id: `${id}-${agent_role}-${round_num}`, agent_role, round_num, sequence: ++sequence, content_markdown, structured_data, created_at: new Date().toISOString() });
+    const runStage = async (agent: string, round: number, content: string, claims: string[] = [], argumentRole?: string) => {
+      if (guestRunRef.current !== run) return;
+      update({ current_stage: agent, current_round: round }); emitGuest("agent_start", { agent, round }); await wait(520);
+      if (agent === "fact_check") {
+        const added = claims.map((claim, index) => ({ id: `${id}-evidence-${argumentRole || "claim"}-${round}-${index}`, round_num: round, argument_role: argumentRole || "fact_check", claim_text: claim, verdict: "uncertain" as const, rationale: "游客演示不会调用外部检索，正式评审时将绑定真实来源。", sources: [] }));
+        setEvidence((previous) => [...previous, ...added]); update({ evidence_count: added.length }); added.forEach((item) => emitGuest("evidence_upsert", { agent, round, evidence_id: item.id, claim: item.claim_text, verdict: item.verdict, source_count: 0 }));
+        emitGuest("agent_result", { agent, round, content: `已完成第 ${round} 轮论据核查，共处理 ${added.length} 条论据。` });
+      } else {
+        const item = output(agent, round, content, { claims: claims.map((claim) => ({ claim })) }); setSelected((previous) => previous && previous.id === id ? { ...previous, current_stage: agent, current_round: round, outputs: [...previous.outputs, item], updated_at: new Date().toISOString() } : previous); emitGuest("agent_result", { agent, round, output_id: item.id, content });
+      }
+    };
+    await runStage("document_parse", 0, `游客演示已完成材料解析：${topic.trim() || files.map((file) => file.name).join("、") || "示例主题"}。已提取核心观点、关键指标和实施约束。`);
+    for (let round = 1; round <= rounds; round += 1) {
+      await runStage("benefit_argument", round, "从可行性、预期收益和有利条件梳理正向论据。", ["该方案具备潜在业务收益，仍需结合真实材料验证。"]);
+      await runStage("fact_check", round, "", ["该方案具备潜在业务收益，仍需结合真实材料验证。"], "benefit_argument");
+      await runStage("risk_argument", round, "识别落地约束、实施风险和需要补充确认的反面论据。", ["方案落地依赖预算、资源和实施条件，当前材料不足以排除风险。"]);
+      await runStage("fact_check", round, "", ["方案落地依赖预算、资源和实施条件，当前材料不足以排除风险。"], "risk_argument");
+      emitGuest("round_complete", { round, max_round: rounds });
+    }
+    if (guestRunRef.current !== run) return;
+    await runStage("summary_report", rounds, "正在汇总游客演示结果。", []);
+    const subject = topic.trim() || "游客示例评审";
+    const report = `## 方案概述\n${subject}\n\n## 收益清单\n- 该演示展示了收益论证与证据核查的协作流程。\n\n## 风险与隐患清单\n- 正式评审需要补充真实方案材料、预算和实施边界。\n\n## 待确认不确定性点\n- 游客演示未调用外部检索，所有论据均标记为待确认。\n\n## 参考证据来源列表\n- 游客演示不保存或生成外部证据来源。`;
+    update({ current_stage: "completed", status: "completed", current_round: rounds, report_markdown: report }); emitGuest("report_ready", { markdown: report }); emitGuest("done", { status: "completed" }); setNotice("游客演示已完成；刷新页面后本次内容会清空");
+  }
+
   async function createReview() {
     if (!user) { setError("请先登录，再启动评审"); return; }
+    if (guest) { setBusy(true); try { await createGuestReview(); } finally { setBusy(false); } return; }
     if (!activeOrg || (!topic.trim() && files.length === 0)) { setError("请输入调研主题或上传至少一个文档"); return; }
     setBusy(true); setError(""); setNotice("");
     try {
@@ -150,7 +191,12 @@ export default function HomePage() {
   }
 
   async function downloadReport() {
-    if (!selected) return; const response = await fetch(api.reviews.downloadUrl(selected.id), { credentials: "include" });
+    if (!selected) return;
+    if (guest && selected.report_markdown) {
+      const blob = new Blob([selected.report_markdown], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `guest-review-${selected.id.slice(-8)}.md`; anchor.click(); URL.revokeObjectURL(url); return;
+    }
+    const response = await fetch(api.reviews.downloadUrl(selected.id), { credentials: "include" });
     if (!response.ok) { setError(response.status === 401 ? "登录已过期，请重新登录" : "报告下载失败"); return; }
     const blob = await response.blob(); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `review-${selected.id.slice(0, 8)}.md`; anchor.click(); URL.revokeObjectURL(url);
   }
@@ -200,15 +246,15 @@ export default function HomePage() {
     {mobileMenuOpen && <button className="drawer-scrim" aria-label="关闭导航" onClick={() => setMobileMenuOpen(false)} />}
     <aside className={`review-sidebar ${mobileMenuOpen ? "open" : ""}`}>
       <div className="sidebar-brand"><div className="brand"><span className="brand-mark">R</span><span><strong>交叉评审</strong><small>Review Mesh</small></span></div><button className="icon-button mobile-close" aria-label="关闭导航" onClick={() => setMobileMenuOpen(false)}><X size={18} /></button></div>
-      <div className="workspace-switcher"><span className="eyebrow">组织工作区</span>{user ? <select className="select" value={activeOrg?.id || ""} onChange={(event) => setOrganization(event.target.value)}>{user.organizations.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}</select> : <div className="preview-workspace"><span>演示工作区</span><small>登录后加载组织数据</small></div>}</div>
+      <div className="workspace-switcher"><span className="eyebrow">组织工作区</span>{user && !guest && activeOrg ? <select className="select" value={activeOrg.id} onChange={(event) => setOrganization(event.target.value)}>{user.organizations.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}</select> : <div className="preview-workspace"><span>{guest ? "游客体验" : "演示工作区"}</span><small>{guest ? "不保存历史或用户数据" : "登录后加载组织数据"}</small></div>}</div>
       <nav className="side-nav" aria-label="工作区导航">{navItems.map((item) => { const Icon = item.icon; return <button key={item.key} className={`nav-item ${view === item.key ? "active" : ""}`} onClick={() => showView(item.key)}><Icon size={17} /><span><strong>{item.label}</strong><small>{item.hint}</small></span></button>; })}</nav>
       <div className="sidebar-history"><div className="section-heading"><span>最近评审</span><span className="count-badge">{reviews.length}</span></div>{reviews.length === 0 ? <div className="history-empty">还没有评审任务</div> : reviews.slice(0, 8).map((item) => <button key={item.id} className={`history-item ${selected?.id === item.id ? "active" : ""}`} onClick={() => { void selectReview(item.id); showView("review"); }}><strong title={item.topic || "未命名文档评审"}>{item.topic || "未命名文档评审"}</strong><span>{statusLabels[item.status] || "草稿"}<i />{formatDate(item.created_at)}</span></button>)}</div>
-      <div className="sidebar-footer">{user ? <><div className="profile-row"><span className="avatar">{(user.display_name || user.email).slice(0, 1).toUpperCase()}</span><span className="profile-copy"><strong>{user.display_name || "评审成员"}</strong><small>{user.email}</small></span></div><button className="logout-button" onClick={logout}><LogOut size={15} />退出登录</button></> : <Link className="login-sidebar-link" href="/login">登录后开始评审 <ExternalLink size={14} /></Link>}</div>
+      <div className="sidebar-footer">{user ? <><div className="profile-row"><span className="avatar">{(user.display_name || user.email).slice(0, 1).toUpperCase()}</span><span className="profile-copy"><strong>{user.display_name || "评审成员"}</strong><small>{guest ? "仅当前页面有效" : user.email}</small></span></div><button className="logout-button" onClick={logout}><LogOut size={15} />{guest ? "结束游客体验" : "退出登录"}</button></> : <Link className="login-sidebar-link" href="/login">登录后开始评审 <ExternalLink size={14} /></Link>}</div>
     </aside>
     <main className="review-main">
-      <header className="topbar"><div className="topbar-left"><button className="icon-button menu-trigger" aria-label="打开导航" onClick={() => setMobileMenuOpen(true)}><Menu size={19} /></button><div className="breadcrumbs"><span>工作区</span><b>/</b><strong>{navItems.find((item) => item.key === view)?.label}</strong></div></div><div className="topbar-actions"><span className={`connection-state ${connected ? "live" : ""}`}><i />{connected ? "实时同步" : user ? "系统正常" : "演示模式"}</span><button className="icon-button" aria-label="帮助"><CircleHelp size={18} /></button>{user ? <button className="new-review-button" onClick={() => { showView("review"); setSelected(null); }}><Plus size={17} />新建评审</button> : <Link className="login-top-button" href="/login">登录使用</Link>}</div></header>
+      <header className="topbar"><div className="topbar-left"><button className="icon-button menu-trigger" aria-label="打开导航" onClick={() => setMobileMenuOpen(true)}><Menu size={19} /></button><div className="breadcrumbs"><span>工作区</span><b>/</b><strong>{navItems.find((item) => item.key === view)?.label}</strong></div></div><div className="topbar-actions"><span className={`connection-state ${connected ? "live" : ""}`}><i />{connected ? "实时同步" : guest ? "游客演示" : user ? "系统正常" : "演示模式"}</span><button className="icon-button" aria-label="帮助"><CircleHelp size={18} /></button>{user ? <button className="new-review-button" onClick={() => { showView("review"); setSelected(null); }}><Plus size={17} />新建评审</button> : <Link className="login-top-button" href="/login">登录使用</Link>}</div></header>
       {view === "review" && <div className="page-content review-view">
-        <section className="hero-strip"><div><span className="eyebrow accent-eyebrow">REVIEW WORKSPACE</span><h1>{selected?.topic || "方案交叉评审工作台"}</h1><p>{selected ? `${activeOrg?.name} · ${statusLabels[selected.status] || selected.status}` : "让多个 Agent 从收益、风险与事实证据三个角度交叉审阅方案。"}</p></div><div className="hero-metrics"><div><strong>{reviews.length}</strong><span>评审任务</span></div><div><strong>{evidence.length}</strong><span>证据条目</span></div><div><strong>{selected?.max_round || rounds}</strong><span>当前轮次</span></div><div><strong>{estimateReviewMinutes(selected?.max_round || rounds)}</strong><span>预计分钟</span></div></div></section>
+        <section className="hero-strip"><div><span className="eyebrow accent-eyebrow">REVIEW WORKSPACE</span><h1>{selected?.topic || "方案交叉评审工作台"}</h1><p>{selected ? `${guest ? "游客演示" : activeOrg?.name} · ${statusLabels[selected.status] || selected.status}` : "让多个 Agent 从收益、风险与事实证据三个角度交叉审阅方案。"}</p></div><div className="hero-metrics"><div><strong>{reviews.length}</strong><span>评审任务</span></div><div><strong>{evidence.length}</strong><span>证据条目</span></div><div><strong>{selected?.max_round || rounds}</strong><span>当前轮次</span></div><div><strong>{estimateReviewMinutes(selected?.max_round || rounds)}</strong><span>预计分钟</span></div></div></section>
         {selected && ["queued", "running"].includes(selected.status) && <div className="progress-banner"><Timer size={16} /><span>本次评审预计约 <strong>{estimateReviewMinutes(selected.max_round)} 分钟</strong>，当前正在处理“{labels[selected.current_stage] || selected.current_stage}”。结果会持续写入任务记录，页面断线后可自动恢复。</span></div>}
         {selected?.error_message && <div className="error-banner"><AlertTriangle size={16} />{selected.error_message}</div>}
         <section className="glass-panel composer-panel"><div className="panel-heading"><div><span className="section-kicker"><Sparkles size={14} />开始一次新评审</span><h2>输入评审材料</h2><p>输入主题，或上传方案与立项文档，Agent 会自动建立证据链。</p></div><div className="panel-tools"><span className="panel-help"><CircleHelp size={16} />支持 PDF / DOCX</span><span className="time-estimate"><Clock3 size={14} />预计约 {estimateReviewMinutes(rounds)} 分钟</span></div></div><div className="composer-grid"><div className="topic-field field"><label htmlFor="topic">调研主题</label><textarea id="topic" className="textarea" placeholder="例如：评估企业知识库升级方案的收益、风险与实施约束" value={topic} onChange={(event) => setTopic(event.target.value)} /><div className="field-foot"><span>{topic.length}/500</span><span>建议描述目标、范围和关键约束</span></div></div><div className="composer-side"><div className="field"><label htmlFor="rounds">评审轮次</label><div className="select-wrap"><select id="rounds" className="select" value={rounds} onChange={(event) => setRounds(Number(event.target.value))}>{[1, 2, 3, 4, 5].map((number) => <option key={number} value={number}>{number} 轮 · 约 {estimateReviewMinutes(number)} 分钟</option>)}</select></div></div><label className="dropzone" onClick={(event) => { if (!user) { event.preventDefault(); setError("登录后才能上传评审材料"); } }}><Upload size={20} /><strong>添加 PDF / DOCX</strong><span>单任务最多 5 个文件，每个不超过 20 MB</span><input type="file" accept=".pdf,.docx" multiple onChange={addFiles} /></label><button className="primary start-button" disabled={busy} onClick={() => void createReview()}><Play size={16} />{busy ? "准备评审中" : "启动评审"}</button></div></div>{files.length > 0 && <div className="file-list">{files.map((file, index) => <div className="file-row" key={`${file.name}-${index}`}><span><FileText size={14} />{file.name}</span><button className="text-button" onClick={() => setFiles(files.filter((_, itemIndex) => itemIndex !== index))}>移除</button></div>)}</div>}</section>
@@ -219,7 +265,7 @@ export default function HomePage() {
       </div>}
       {view === "orchestration" && <OrchestrationView selected={selected} connected={connected} rounds={rounds} />}
       {view === "evidence" && <EvidenceView evidence={evidence} defaultExpanded={autoExpandEvidence} onBack={() => showView("review")} />}
-      {view === "settings" && <SettingsView authenticated={Boolean(user)} activeOrg={activeOrg} rounds={rounds} setRounds={setRounds} autoExpandEvidence={autoExpandEvidence} setAutoExpandEvidence={setAutoExpandEvidence} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviteMessage={inviteMessage} preferenceMessage={preferenceMessage} onSavePreferences={savePreferences} onInvite={() => void inviteMember()} />}
+      {view === "settings" && <SettingsView authenticated={Boolean(user && !guest)} activeOrg={activeOrg} rounds={rounds} setRounds={setRounds} autoExpandEvidence={autoExpandEvidence} setAutoExpandEvidence={setAutoExpandEvidence} inviteEmail={inviteEmail} setInviteEmail={setInviteEmail} inviteMessage={inviteMessage} preferenceMessage={preferenceMessage} onSavePreferences={savePreferences} onInvite={() => void inviteMember()} />}
     </main>
   </div>;
 }
