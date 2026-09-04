@@ -4,7 +4,7 @@
 const configuredBase = process.env.NEXT_PUBLIC_API_URL?.trim();
 const BASE = (configuredBase || (
   process.env.NODE_ENV === "production"
-    ? "https://review-platform-api.onrender.com"
+    ? "https://1-0plp.onrender.com"
     : "http://localhost:8000"
 )).replace(/\/$/, "");
 
