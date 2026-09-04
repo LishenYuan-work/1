@@ -2,7 +2,8 @@ services:
   - type: web
     name: review-platform-api
     runtime: docker
-    branch: refactor-review
+    # Keep the API deployment on the same branch as the Vercel frontend.
+    branch: main
     plan: free
     region: singapore
     rootDir: backend

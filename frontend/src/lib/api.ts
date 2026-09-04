@@ -24,11 +24,15 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 function formatApiError(payload: unknown, fallback: string): string {
-  if (typeof payload === "string" && payload.trim()) return payload;
+  if (typeof payload === "string" && payload.trim()) {
+    return payload.trim().toLowerCase() === "not found" ? "评审服务暂未部署最新版本，请稍后重试" : payload;
+  }
   if (!payload || typeof payload !== "object") return fallback;
 
   const detail = (payload as { detail?: unknown }).detail;
-  if (typeof detail === "string" && detail.trim()) return detail;
+  if (typeof detail === "string" && detail.trim()) {
+    return detail.trim().toLowerCase() === "not found" ? "评审服务暂未部署最新版本，请稍后重试" : detail;
+  }
   if (Array.isArray(detail)) {
     const messages = detail.map((item) => {
       if (!item || typeof item !== "object") return String(item);
