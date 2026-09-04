@@ -1,7 +1,10 @@
 // The deployed frontend must never try to call the visitor's own localhost.
 // Keep localhost convenient for local development, while using the public API
 // as a production fallback when Vercel variables were not injected.
-const configuredBase = process.env.NEXT_PUBLIC_API_URL?.trim();
+// Accept either an API origin or an origin that already ends in `/api`.
+// Every client path below includes its own `/api` prefix, so normalize the
+// environment value to prevent production requests such as `/api/api/...`.
+const configuredBase = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/+$/, "").replace(/\/api$/, "");
 const BASE = (configuredBase || (
   process.env.NODE_ENV === "production"
     ? "https://1-0plp.onrender.com"
