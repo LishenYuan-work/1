@@ -225,7 +225,9 @@ class GuestReviewStore:
                 [{"role": "system", "content": "你是汇总评审 Agent。只输出 JSON，字段 markdown；必须包含五个固定标题，全部使用简体中文。"}, {"role": "user", "content": json.dumps({"topic": review.topic, "outputs": review.outputs, "evidence": review.evidence}, ensure_ascii=False)}],
                 {"markdown": self._fallback_report(review)},
             )
-            review.report_markdown = _normalize_report(summary["markdown"])
+            # Guest reviews do not have a SQL ReviewSession, so pass the topic
+            # explicitly while normalizing the fixed report structure.
+            review.report_markdown = _normalize_report(summary["markdown"], topic=review.topic)
             await self.add_output(review, "summary_report", review.max_round, review.report_markdown, summary)
             review.current_stage = "completed"
             review.status = "completed"

@@ -82,6 +82,11 @@ def test_review_round_validation_and_report_headings():
     assert report.index(REPORT_HEADINGS[0]) < report.index(REPORT_HEADINGS[-1])
 
 
+def test_guest_report_normalization_preserves_topic_without_sql_session():
+    report = _normalize_report("## 方案概述\n未命名评审", topic="评估客服自动化项目")
+    assert "## 方案概述\n评估客服自动化项目" in report
+
+
 def test_invalid_agent_output_is_rejected():
     try:
         _validate_node_result("benefit_argument", {"summary": "x", "claims": []})

@@ -325,7 +325,12 @@ def _fallback_report(session: ReviewSession, outputs: list[ReviewOutput], eviden
     ])
 
 
-def _normalize_report(markdown: str, session: ReviewSession | None = None, evidence: list[EvidenceItem] | None = None) -> str:
+def _normalize_report(
+    markdown: str,
+    session: ReviewSession | None = None,
+    evidence: list[EvidenceItem] | None = None,
+    topic: str | None = None,
+) -> str:
     sections: dict[str, str] = {}
     current: str | None = None
     for line in markdown.splitlines():
@@ -336,12 +341,17 @@ def _normalize_report(markdown: str, session: ReviewSession | None = None, evide
         elif current:
             sections[current] += line + "\n"
     fallback = {
-        "## 方案概述": session.topic if session and session.topic else "未命名评审",
+        "## 方案概述": topic or (session.topic if session and session.topic else "未命名评审"),
         "## 收益清单": "- 暂无",
         "## 风险与隐患清单": "- 暂无",
         "## 待确认不确定性点": "- 暂无",
         "## 参考证据来源列表": "- 暂无",
     }
+    # The session topic is the user's source of truth. Do not allow a model
+    # fallback such as "未命名评审" to overwrite it in the final report.
+    source_topic = topic or (session.topic if session and session.topic else None)
+    if source_topic:
+        sections["## 方案概述"] = source_topic
     if evidence:
         fallback["## 待确认不确定性点"] = "\n".join(f"- {item.claim_text}" for item in evidence if item.verdict == "uncertain") or "- 暂无"
         source_lines = []

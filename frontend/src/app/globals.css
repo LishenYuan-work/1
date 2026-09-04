@@ -199,6 +199,12 @@ button:disabled { cursor: not-allowed; opacity: .52; }
 .human-review > div { display: flex; gap: 7px; }
 .report { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.72; }
 .report-preview { max-height: 365px; overflow: auto; padding: 20px 21px; color: #33443b; font-size: 12px; }
+.report-markdown h3 { margin: 0 0 9px; color: var(--ink); font-size: 14px; line-height: 1.35; }
+.report-markdown p { margin: 0 0 12px; line-height: 1.72; }
+.report-markdown .report-spacer { height: 5px; }
+.report-bullet { display: flex; gap: 8px; margin: 0 0 7px; line-height: 1.62; }
+.report-bullet > span:first-child { color: var(--accent); font-weight: 800; }
+.report-markdown a { display: inline-flex; align-items: center; gap: 3px; color: var(--accent-deep); text-decoration: underline; text-underline-offset: 2px; }
 .progress-banner { display: flex; align-items: flex-start; gap: 9px; padding: 12px 14px; border: 1px solid rgba(35, 131, 79, .18); border-radius: 9px; color: var(--accent-deep); background: linear-gradient(105deg, rgba(224, 245, 232, .8), rgba(229, 246, 243, .58)); font-size: 12px; line-height: 1.55; }
 .progress-banner svg { flex: 0 0 auto; margin-top: 2px; }
 .error-banner, .notice-banner { display: flex; align-items: center; gap: 8px; padding: 11px 13px; border-radius: 8px; font-size: 12px; }
