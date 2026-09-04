@@ -38,6 +38,16 @@ def create_refresh_token(user_id: str, token_version: int = 0) -> str:
     return _create_jwt(user_id, "refresh", timedelta(days=settings.refresh_token_days), token_version)
 
 
+def create_guest_access_token(user_id: str) -> str:
+    payload = {
+        "sub": user_id,
+        "type": "access",
+        "guest": True,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=settings.guest_session_minutes),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)
+
+
 def decode_token(token: str, expected_type: str = "access") -> dict[str, Any] | None:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[ALGORITHM])

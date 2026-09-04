@@ -10,16 +10,39 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.security import create_access_token, create_one_time_token, create_refresh_token, decode_token, hash_one_time_token, hash_password, verify_password
+from app.core.security import create_access_token, create_guest_access_token, create_one_time_token, create_refresh_token, decode_token, hash_one_time_token, hash_password, verify_password
 from app.db.database import get_db
 from app.db.models import EmailToken, Organization, OrganizationInvite, OrganizationMember, Profile
-from app.dependencies import require_user
+from app.dependencies import GuestUser, require_user
 from app.models.schemas import CreateOrganizationRequest, EmailRequest, InviteMemberRequest, LoginRequest, MemberItem, OrganizationSummary, RefreshRequest, RegisterRequest, ResetPasswordRequest, SupabaseExchangeRequest, TokenRequest, TokenResponse, UserProfile
 from app.services.email_service import EmailDeliveryError, send_email
 from app.services.supabase_auth import SupabaseAuthError, get_user as get_supabase_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 org_router = APIRouter(prefix="/api/organizations", tags=["organizations"])
+
+
+@router.post("/guest", response_model=TokenResponse)
+async def guest_login(response: Response):
+    """Create a short-lived signed visitor session without a database user."""
+    guest_id = f"guest:{secrets.token_urlsafe(18)}"
+    access = create_guest_access_token(guest_id)
+    secure = settings.app_env.lower() == "production"
+    response.set_cookie(
+        "review_access", access, httponly=True, secure=secure,
+        samesite="none" if secure else "lax", max_age=settings.guest_session_minutes * 60, path="/",
+    )
+    response.set_cookie(
+        "review_csrf", secrets.token_urlsafe(32), httponly=False, secure=secure,
+        samesite="none" if secure else "lax", max_age=settings.guest_session_minutes * 60, path="/",
+    )
+    return TokenResponse(
+        access_token=access,
+        user=UserProfile(
+            id=guest_id, email="guest@local.invalid", display_name="游客体验",
+            email_verified=True, organizations=[], created_at=datetime.now(timezone.utc).isoformat(), is_guest=True,
+        ),
+    )
 
 
 @router.get("/csrf")
@@ -279,6 +302,10 @@ async def refresh(response: Response, req: RefreshRequest | None = None, refresh
 
 @router.post("/logout")
 async def logout(response: Response, user: Profile = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        response.delete_cookie("review_access", path="/")
+        response.delete_cookie("review_csrf", path="/")
+        return {"status": "logged_out"}
     user.token_version += 1
     await db.commit()
     response.delete_cookie("review_access", path="/")
@@ -289,6 +316,8 @@ async def logout(response: Response, user: Profile = Depends(require_user), db: 
 
 @router.get("/me", response_model=UserProfile)
 async def me(user: Profile = Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        return UserProfile(id=user.id, email=user.email, display_name=user.display_name, email_verified=True, organizations=[], created_at=user.email_verified_at.isoformat(), is_guest=True)
     memberships = await _load_memberships(db, user.id)
     return _profile_response(user, memberships).user
 

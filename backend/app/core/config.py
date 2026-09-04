@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "review-platform-secret-change-in-production"
     access_token_minutes: int = 1440
     refresh_token_days: int = 7
+    guest_session_minutes: int = 60
 
     email_provider: str = "console"
     resend_api_key: str = ""

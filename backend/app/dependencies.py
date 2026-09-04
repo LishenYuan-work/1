@@ -1,5 +1,8 @@
 """Authentication and organization authorization dependencies."""
 
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
 from fastapi import Cookie, Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
@@ -12,24 +15,35 @@ from app.db.models import OrganizationMember, Profile
 security_scheme = HTTPBearer(auto_error=False)
 
 
+@dataclass(frozen=True)
+class GuestUser:
+    id: str
+    email: str = "guest@local.invalid"
+    display_name: str = "游客体验"
+    email_verified_at: datetime = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    is_guest: bool = True
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     access_cookie: str | None = Cookie(default=None, alias="review_access"),
     db: AsyncSession = Depends(get_db),
-) -> Profile | None:
+) -> Profile | GuestUser | None:
     raw_token = credentials.credentials if credentials else access_cookie
     if not raw_token:
         return None
     payload = decode_token(raw_token)
     if not payload:
         return None
+    if payload.get("guest") is True and str(payload["sub"]).startswith("guest:"):
+        return GuestUser(id=str(payload["sub"]))
     user = await db.scalar(select(Profile).where(Profile.id == payload["sub"], Profile.is_active.is_(True)))
     if not user or int(payload.get("ver", 0)) != user.token_version:
         return None
     return user
 
 
-async def require_user(user: Profile | None = Depends(get_current_user)) -> Profile:
+async def require_user(user: Profile | GuestUser | None = Depends(get_current_user)) -> Profile | GuestUser:
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "请先登录")
     if not user.email_verified_at:

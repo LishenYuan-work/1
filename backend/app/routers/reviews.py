@@ -18,11 +18,12 @@ from app.core.config import settings
 from app.core.sse_manager import sse_manager
 from app.db.database import async_session, get_db
 from app.db.models import EvidenceItem, OrganizationMember, ReviewDocument, ReviewEvent, ReviewOutput, ReviewReport, ReviewSession
-from app.dependencies import require_user
+from app.dependencies import GuestUser, require_user
 from app.models.schemas import EvidenceItemResponse, EvidenceSourceItem, HumanReviewRequest, ReviewDetail, ReviewDocumentItem, ReviewEventItem, ReviewOutputItem, ReviewProgress, ReviewSummary, CreateReviewRequest
 from app.services.document_service import extract_document_text
 from app.services.review_service import run_review_background
 from app.services.storage_service import storage_service
+from app.services.guest_review_service import guest_review_store
 
 router = APIRouter(prefix="/api/reviews", tags=["reviews"])
 
@@ -88,6 +89,9 @@ def _summary(s: ReviewSession) -> ReviewSummary:
 
 @router.post("", response_model=ReviewSummary, status_code=201)
 async def create_review(req: CreateReviewRequest, background_tasks: BackgroundTasks, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        review = guest_review_store.create(user.id, req.topic, req.max_round)
+        return ReviewSummary(**guest_review_store.summary(review))
     await _membership(db, user.id, req.organization_id)
     # Files are uploaded after the session is created, so only reject an
     # explicitly blank topic here. The start endpoint validates that at least
@@ -103,6 +107,8 @@ async def create_review(req: CreateReviewRequest, background_tasks: BackgroundTa
 
 @router.get("", response_model=list[ReviewSummary])
 async def list_reviews(organization_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        return []
     await _membership(db, user.id, organization_id)
     result = await db.execute(select(ReviewSession).options(selectinload(ReviewSession.documents), selectinload(ReviewSession.evidence), selectinload(ReviewSession.creator)).where(ReviewSession.organization_id == organization_id).order_by(ReviewSession.created_at.desc()).limit(100))
     return [_summary(item) for item in result.scalars().all()]
@@ -110,12 +116,51 @@ async def list_reviews(organization_id: str, user=Depends(require_user), db: Asy
 
 @router.get("/{session_id}", response_model=ReviewDetail)
 async def get_review(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        try:
+            return ReviewDetail(**guest_review_store.detail(guest_review_store.get(session_id, user.id)))
+        except KeyError as exc:
+            raise HTTPException(404, "评审任务不存在") from exc
     s = await _session(db, user.id, session_id)
     return ReviewDetail(**_summary(s).model_dump(), documents=[ReviewDocumentItem(id=d.id, filename=d.filename, content_type=d.content_type, size_bytes=d.size_bytes, parse_status=d.parse_status, parse_error=d.parse_error) for d in s.documents], outputs=[ReviewOutputItem(id=o.id, agent_role=o.agent_role, round_num=o.round_num, sequence=o.sequence, content_markdown=o.content_markdown, structured_data=o.structured_data, created_at=str(o.created_at)) for o in s.outputs], report_markdown=s.report.markdown if s.report else None, error_message=s.error_message)
 
 
 @router.post("/{session_id}/documents", response_model=ReviewDocumentItem, status_code=201)
 async def upload_document(session_id: str, file: UploadFile = File(...), user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        try:
+            review = guest_review_store.get(session_id, user.id)
+        except KeyError as exc:
+            raise HTTPException(404, "评审任务不存在") from exc
+        if review.status not in {"draft", "failed", "interrupted", "needs_revision"}:
+            raise HTTPException(409, "评审已启动，不能再修改输入材料")
+        if len(review.documents) >= settings.max_upload_files:
+            raise HTTPException(400, f"每个评审最多上传 {settings.max_upload_files} 个文件")
+        filename = _safe_filename(file.filename or "document")
+        if not filename.lower().endswith((".pdf", ".docx")):
+            raise HTTPException(400, "仅支持 PDF 或 DOCX 文件")
+        content = await _read_upload_limited(file, settings.max_upload_bytes)
+        if not content:
+            raise HTTPException(400, "文件为空")
+        _validate_file_signature(filename, content)
+        try:
+            text = await asyncio.to_thread(extract_document_text, filename, content)
+        except Exception as exc:
+            raise HTTPException(400, "文件解析失败，请确认文件未损坏且未加密") from exc
+        if not text:
+            raise HTTPException(400, "未能提取文档文字，扫描件暂不支持")
+        document = {
+            "id": f"guest-doc-{hashlib.sha256(content).hexdigest()[:20]}",
+            "filename": filename,
+            "content_type": file.content_type or "application/octet-stream",
+            "size_bytes": len(content),
+            "parse_status": "completed",
+            "parse_error": None,
+            "extracted_text": text[: settings.max_document_chars],
+        }
+        review.documents.append(document)
+        review.updated_at = datetime.now(timezone.utc).isoformat()
+        return ReviewDocumentItem(**{key: document[key] for key in ("id", "filename", "content_type", "size_bytes", "parse_status", "parse_error")})
     session = await _session(db, user.id, session_id)
     session = await db.scalar(select(ReviewSession).options(selectinload(ReviewSession.documents)).where(ReviewSession.id == session_id).with_for_update())
     if not session:
@@ -157,6 +202,21 @@ async def upload_document(session_id: str, file: UploadFile = File(...), user=De
 
 @router.post("/{session_id}/start", response_model=ReviewProgress)
 async def start_review(session_id: str, background_tasks: BackgroundTasks, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        try:
+            review = guest_review_store.get(session_id, user.id)
+        except KeyError as exc:
+            raise HTTPException(404, "评审任务不存在") from exc
+        if not review.topic and not review.documents:
+            raise HTTPException(400, "请输入调研主题或上传文档")
+        if review.status in {"queued", "running", "awaiting_human"}:
+            raise HTTPException(409, "评审已在执行")
+        if review.status == "completed":
+            raise HTTPException(409, "已完成的评审不能重复启动")
+        review.status = "queued"
+        review.current_stage = "queued"
+        guest_review_store.tasks[review.id] = asyncio.create_task(guest_review_store.run(review))
+        return ReviewProgress(session_id=review.id, status=review.status, current_stage=review.current_stage, current_round=review.current_round, max_round=review.max_round, output_count=0, evidence_count=0, report_ready=False)
     session = await _session(db, user.id, session_id)
     if not session.topic and not session.documents:
         raise HTTPException(400, "请输入调研主题或上传文档")
@@ -185,12 +245,20 @@ async def start_review(session_id: str, background_tasks: BackgroundTasks, user=
 
 @router.get("/{session_id}/progress", response_model=ReviewProgress)
 async def review_progress(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        try:
+            review = guest_review_store.get(session_id, user.id)
+        except KeyError as exc:
+            raise HTTPException(404, "评审任务不存在") from exc
+        return ReviewProgress(session_id=review.id, status=review.status, current_stage=review.current_stage, current_round=review.current_round, max_round=review.max_round, output_count=len(review.outputs), evidence_count=len(review.evidence), report_ready=bool(review.report_markdown), error_message=review.error_message)
     s = await _session(db, user.id, session_id)
     return ReviewProgress(session_id=s.id, status=s.status, current_stage=s.current_stage, current_round=s.current_round, max_round=s.max_round, output_count=len(s.outputs), evidence_count=len(s.evidence), report_ready=bool(s.report), error_message=s.error_message)
 
 
 @router.post("/{session_id}/human-review", response_model=ReviewProgress)
 async def human_review(session_id: str, req: HumanReviewRequest, background_tasks: BackgroundTasks, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        raise HTTPException(409, "游客体验不支持人工复核，请登录后使用")
     session = await _session(db, user.id, session_id)
     member = await _membership(db, user.id, session.organization_id)
     if session.creator_id != user.id and member.role != "owner":
@@ -212,6 +280,12 @@ async def human_review(session_id: str, req: HumanReviewRequest, background_task
 
 @router.get("/{session_id}/events", response_model=list[ReviewEventItem])
 async def review_events(session_id: str, after: int = 0, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        try:
+            review = guest_review_store.get(session_id, user.id)
+        except KeyError as exc:
+            raise HTTPException(404, "评审任务不存在") from exc
+        return [ReviewEventItem(session_id=review.id, sequence=0, timestamp=review.updated_at, type="session_status", payload={"status": review.status, "stage": review.current_stage, "round": review.current_round})] if after == 0 else []
     await _session(db, user.id, session_id)
     result = await db.execute(select(ReviewEvent).where(ReviewEvent.session_id == session_id, ReviewEvent.sequence > after).order_by(ReviewEvent.sequence))
     return [ReviewEventItem(session_id=e.session_id, sequence=e.sequence, timestamp=str(e.created_at), type=e.event_type, payload=e.payload) for e in result.scalars().all()]
@@ -219,6 +293,25 @@ async def review_events(session_id: str, after: int = 0, user=Depends(require_us
 
 @router.get("/{session_id}/stream")
 async def stream_review(session_id: str, last_event_id: int = Header(default=0, alias="Last-Event-ID"), user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        try:
+            guest_review_store.get(session_id, user.id)
+        except KeyError as exc:
+            raise HTTPException(404, "评审任务不存在") from exc
+        async def guest_generator():
+            queue = await sse_manager.subscribe(session_id, last_event_id)
+            try:
+                while True:
+                    try:
+                        raw = await asyncio.wait_for(queue.get(), timeout=25)
+                        yield raw
+                        if "event: done" in raw:
+                            break
+                    except asyncio.TimeoutError:
+                        yield ":keepalive\n\n"
+            finally:
+                sse_manager.unsubscribe(session_id, queue)
+        return StreamingResponse(guest_generator(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     await _session(db, user.id, session_id)
     async def generator():
         queue = await sse_manager.subscribe(session_id, last_event_id)
@@ -242,6 +335,11 @@ async def stream_review(session_id: str, last_event_id: int = Header(default=0, 
 
 @router.get("/{session_id}/evidence", response_model=list[EvidenceItemResponse])
 async def review_evidence(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        try:
+            return [EvidenceItemResponse(**item) for item in guest_review_store.get(session_id, user.id).evidence]
+        except KeyError as exc:
+            raise HTTPException(404, "评审任务不存在") from exc
     await _session(db, user.id, session_id)
     result = await db.execute(select(EvidenceItem).options(selectinload(EvidenceItem.sources)).where(EvidenceItem.session_id == session_id).order_by(EvidenceItem.created_at))
     return [EvidenceItemResponse(id=e.id, round_num=e.round_num, argument_role=e.argument_role, claim_text=e.claim_text, verdict=e.verdict, rationale=e.rationale, sources=[EvidenceSourceItem(id=s.id, title=s.title, url=s.url, snippet=s.snippet, publisher=s.publisher, retrieved_at=str(s.retrieved_at)) for s in e.sources]) for e in result.scalars().all()]
@@ -249,6 +347,14 @@ async def review_evidence(session_id: str, user=Depends(require_user), db: Async
 
 @router.get("/{session_id}/report")
 async def get_report(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        try:
+            review = guest_review_store.get(session_id, user.id)
+        except KeyError as exc:
+            raise HTTPException(404, "评审任务不存在") from exc
+        if not review.report_markdown:
+            raise HTTPException(404, "评审报告尚未生成")
+        return {"session_id": review.id, "markdown": review.report_markdown, "version": 1, "created_at": review.updated_at}
     s = await _session(db, user.id, session_id)
     if not s.report:
         raise HTTPException(404, "评审报告尚未生成")
@@ -257,6 +363,14 @@ async def get_report(session_id: str, user=Depends(require_user), db: AsyncSessi
 
 @router.get("/{session_id}/report.md")
 async def download_report(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        try:
+            review = guest_review_store.get(session_id, user.id)
+        except KeyError as exc:
+            raise HTTPException(404, "评审任务不存在") from exc
+        if not review.report_markdown:
+            raise HTTPException(404, "评审报告尚未生成")
+        return Response(review.report_markdown, media_type="text/markdown; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="guest-review-{session_id[:8]}.md"'})
     s = await _session(db, user.id, session_id)
     if not s.report:
         raise HTTPException(404, "评审报告尚未生成")
@@ -265,6 +379,16 @@ async def download_report(session_id: str, user=Depends(require_user), db: Async
 
 @router.delete("/{session_id}", status_code=204)
 async def delete_review(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+    if isinstance(user, GuestUser):
+        try:
+            guest_review_store.get(session_id, user.id)
+        except KeyError as exc:
+            raise HTTPException(404, "评审任务不存在") from exc
+        guest_review_store.reviews.pop(session_id, None)
+        task = guest_review_store.tasks.pop(session_id, None)
+        if task and not task.done():
+            task.cancel()
+        return Response(status_code=204)
     session = await _session(db, user.id, session_id)
     session = await db.scalar(select(ReviewSession).options(selectinload(ReviewSession.documents)).where(ReviewSession.id == session_id).with_for_update())
     if not session:

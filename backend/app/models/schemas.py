@@ -18,6 +18,7 @@ class UserProfile(BaseModel):
     email_verified: bool
     organizations: list[OrganizationSummary] = []
     created_at: str
+    is_guest: bool = False
 
 
 class RegisterRequest(BaseModel):

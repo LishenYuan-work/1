@@ -109,7 +109,6 @@ export default function HomePage() {
   const [preferenceMessage, setPreferenceMessage] = useState("");
   const selectedRef = useRef<ReviewDetail | null>(null);
   const orgRef = useRef<string | undefined>(undefined);
-  const guestRunRef = useRef(0);
   const activeOrg = useMemo(() => user?.organizations.find((item) => item.id === organization) || user?.organizations[0], [organization, user]);
 
   useEffect(() => { selectedRef.current = selected; }, [selected]);
@@ -135,40 +134,13 @@ export default function HomePage() {
 
   async function createGuestReview() {
     if (!topic.trim() && files.length === 0) { setError("请输入调研主题或选择示例材料"); return; }
-    const run = ++guestRunRef.current;
-    const id = `guest-${Date.now()}`;
-    const startedAt = new Date().toISOString();
-    const initial: ReviewDetail = { id, organization_id: "guest", topic: topic.trim() || `游客示例评审（${files.map((file) => file.name).join("、")})`, max_round: rounds, current_round: 0, current_stage: "queued", status: "running", document_count: files.length, evidence_count: 0, creator_id: "guest", creator_name: "游客体验", created_at: startedAt, updated_at: startedAt, documents: [], outputs: [], report_markdown: null, error_message: null };
-    setSelected(initial); selectedRef.current = initial; setReviews([]); setEvidence([]); setEvents([]); setStreamContent({}); setError(""); setNotice("游客模式仅在当前页面运行，不会保存评审记录");
-    let sequence = 0;
-    const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
-    const update = (changes: Partial<ReviewDetail>) => setSelected((previous) => previous && previous.id === id ? { ...previous, ...changes, updated_at: new Date().toISOString() } : previous);
-    const emitGuest = (type: string, payload: Record<string, unknown>) => { const event = { type, session_id: id, sequence: ++sequence, timestamp: new Date().toISOString(), ...payload } as ReviewEvent; setEvents((previous) => [...previous, event]); return event; };
-    const output = (agent_role: string, round_num: number, content_markdown: string, structured_data: Record<string, unknown> = {}) => ({ id: `${id}-${agent_role}-${round_num}`, agent_role, round_num, sequence: ++sequence, content_markdown, structured_data, created_at: new Date().toISOString() });
-    const runStage = async (agent: string, round: number, content: string, claims: string[] = [], argumentRole?: string) => {
-      if (guestRunRef.current !== run) return;
-      update({ current_stage: agent, current_round: round }); emitGuest("agent_start", { agent, round }); await wait(520);
-      if (agent === "fact_check") {
-        const added = claims.map((claim, index) => ({ id: `${id}-evidence-${argumentRole || "claim"}-${round}-${index}`, round_num: round, argument_role: argumentRole || "fact_check", claim_text: claim, verdict: "uncertain" as const, rationale: "游客演示不会调用外部检索，正式评审时将绑定真实来源。", sources: [] }));
-        setEvidence((previous) => [...previous, ...added]); update({ evidence_count: added.length }); added.forEach((item) => emitGuest("evidence_upsert", { agent, round, evidence_id: item.id, claim: item.claim_text, verdict: item.verdict, source_count: 0 }));
-        emitGuest("agent_result", { agent, round, content: `已完成第 ${round} 轮论据核查，共处理 ${added.length} 条论据。` });
-      } else {
-        const item = output(agent, round, content, { claims: claims.map((claim) => ({ claim })) }); setSelected((previous) => previous && previous.id === id ? { ...previous, current_stage: agent, current_round: round, outputs: [...previous.outputs, item], updated_at: new Date().toISOString() } : previous); emitGuest("agent_result", { agent, round, output_id: item.id, content });
-      }
-    };
-    await runStage("document_parse", 0, `游客演示已完成材料解析：${topic.trim() || files.map((file) => file.name).join("、") || "示例主题"}。已提取核心观点、关键指标和实施约束。`);
-    for (let round = 1; round <= rounds; round += 1) {
-      await runStage("benefit_argument", round, "从可行性、预期收益和有利条件梳理正向论据。", ["该方案具备潜在业务收益，仍需结合真实材料验证。"]);
-      await runStage("fact_check", round, "", ["该方案具备潜在业务收益，仍需结合真实材料验证。"], "benefit_argument");
-      await runStage("risk_argument", round, "识别落地约束、实施风险和需要补充确认的反面论据。", ["方案落地依赖预算、资源和实施条件，当前材料不足以排除风险。"]);
-      await runStage("fact_check", round, "", ["方案落地依赖预算、资源和实施条件，当前材料不足以排除风险。"], "risk_argument");
-      emitGuest("round_complete", { round, max_round: rounds });
-    }
-    if (guestRunRef.current !== run) return;
-    await runStage("summary_report", rounds, "正在汇总游客演示结果。", []);
-    const subject = topic.trim() || "游客示例评审";
-    const report = `## 方案概述\n${subject}\n\n## 收益清单\n- 该演示展示了收益论证与证据核查的协作流程。\n\n## 风险与隐患清单\n- 正式评审需要补充真实方案材料、预算和实施边界。\n\n## 待确认不确定性点\n- 游客演示未调用外部检索，所有论据均标记为待确认。\n\n## 参考证据来源列表\n- 游客演示不保存或生成外部证据来源。`;
-    update({ current_stage: "completed", status: "completed", current_round: rounds, report_markdown: report }); emitGuest("report_ready", { markdown: report }); emitGuest("done", { status: "completed" }); setNotice("游客演示已完成；刷新页面后本次内容会清空");
+    setError(""); setNotice("");
+    const review = await api.reviews.create({ organization_id: "guest", topic: topic.trim() || undefined, max_round: rounds });
+    for (const file of files) await api.reviews.upload(review.id, file);
+    const detail = await api.reviews.get(review.id);
+    setSelected(detail); selectedRef.current = detail; setReviews([]); setEvidence([]); setEvents([]); setStreamContent({});
+    setTopic(""); setFiles([]); setNotice("游客模式仅在当前页面运行，不会保存评审记录");
+    await api.reviews.start(review.id); connect(review.id);
   }
 
   async function createReview() {

@@ -1,4 +1,4 @@
-from app.core.security import create_one_time_token, hash_one_time_token
+from app.core.security import create_guest_access_token, create_one_time_token, decode_token, hash_one_time_token
 from app.models.schemas import CreateReviewRequest
 from app.services.review_service import REPORT_HEADINGS, _coerce_node_result, _normalize_report, _validate_node_result
 from app.runtime.langgraph_runtime import ReviewState, build_review_graph
@@ -6,12 +6,35 @@ from app.routers.reviews import _safe_filename, _validate_file_signature
 from app.core.web_search import filter_relevant_results
 from app.core.config import settings
 from app.services.email_service import EmailDeliveryError, send_email
+from app.services.guest_review_service import GuestReviewStore
 
 
 def test_one_time_token_hash_round_trip():
     raw, hashed = create_one_time_token()
     assert raw
     assert hashed == hash_one_time_token(raw)
+
+
+def test_guest_token_is_ephemeral_and_marked_as_guest():
+    payload = decode_token(create_guest_access_token("guest:test"))
+    assert payload is not None
+    assert payload["sub"] == "guest:test"
+    assert payload["guest"] is True
+
+
+def test_guest_review_store_is_owner_scoped_and_not_persistent():
+    store = GuestReviewStore()
+    review = store.create("guest:one", "游客测试", 1)
+    assert store.summary(review)["organization_id"] == "guest"
+    assert store.get(review.id, "guest:one").id == review.id
+    try:
+        store.get(review.id, "guest:two")
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("guest reviews must be isolated by owner token")
+    store.purge("guest:one")
+    assert review.id not in store.reviews
 
 
 def test_review_round_validation_and_report_headings():

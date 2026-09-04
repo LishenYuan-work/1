@@ -115,6 +115,7 @@ async function request<T>(
 
 export const api = {
   auth: {
+    guest: () => request<AuthResponse>("POST", "/api/auth/guest"),
     register: (body: RegisterInput) =>
       request<AuthResponse>("POST", "/api/auth/register", body),
     login: (body: { email: string; password: string; remember_me: boolean }) =>
