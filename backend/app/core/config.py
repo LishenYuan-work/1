@@ -86,17 +86,13 @@ class Settings(BaseSettings):
         patterns = [] if self.app_env.lower() == "production" else [r"http://localhost:\d+"]
         if self.frontend_url:
             patterns.append(re.escape(self.frontend_url.rstrip("/")))
-        # Vercel creates a unique preview hostname for each branch deployment.
-        # Keep the allow-list limited to this project's review branch so preview
-        # builds can authenticate without opening CORS to arbitrary origins.
-        if self.app_env.lower() == "production":
-            # Vercel uses both branch aliases and immutable deployment aliases.
-            # This project is deployed under the `1` Vercel project slug, so
-            # permit only its generated hosts; other Vercel projects remain
-            # rejected unless explicitly listed through FRONTEND_URL.
-            patterns.append(
-                r"https://(?:1\.vercel\.app|1-git-refactor-review\.vercel\.app|1(?:-git-refactor-review)?-[a-z0-9-]+\.vercel\.app)"
-            )
+        # Vercel creates a unique hostname for each deployment. Keep the
+        # allow-list limited to this project's `1` slug. This is intentionally
+        # independent of APP_ENV because an existing Render service can retain
+        # an older APP_ENV value while its frontend is already deployed.
+        patterns.append(
+            r"https://(?:1\.vercel\.app|1-git-refactor-review\.vercel\.app|1(?:-git-refactor-review)?-[a-z0-9-]+\.vercel\.app)"
+        )
         return r"^(" + "|".join(patterns) + r")$"
 
 
