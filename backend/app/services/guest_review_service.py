@@ -227,7 +227,12 @@ class GuestReviewStore:
             )
             # Guest reviews do not have a SQL ReviewSession, so pass the topic
             # explicitly while normalizing the fixed report structure.
-            review.report_markdown = _normalize_report(summary["markdown"], topic=review.topic)
+            review.report_markdown = _normalize_report(
+                summary["markdown"],
+                topic=review.topic,
+                outputs=review.outputs,
+                evidence=review.evidence,
+            )
             await self.add_output(review, "summary_report", review.max_round, review.report_markdown, summary)
             review.current_stage = "completed"
             review.status = "completed"

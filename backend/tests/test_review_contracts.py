@@ -87,6 +87,23 @@ def test_guest_report_normalization_preserves_topic_without_sql_session():
     assert "## 方案概述\n评估客服自动化项目" in report
 
 
+def test_report_normalization_replaces_empty_model_sections_from_outputs_and_evidence():
+    outputs = [
+        {"agent_role": "benefit_argument", "content_markdown": "可降低人工处理成本"},
+        {"agent_role": "risk_argument", "content_markdown": "实施需要额外预算"},
+    ]
+    evidence = [{"claim_text": "需确认预算", "verdict": "uncertain", "sources": []}]
+    report = _normalize_report(
+        "## 方案概述\n主题\n## 收益清单\n- 暂无\n## 风险与隐患清单\n- 暂无\n## 待确认不确定性点\n- 暂无\n## 参考证据来源列表\n- 暂无",
+        topic="主题",
+        outputs=outputs,
+        evidence=evidence,
+    )
+    assert "- 可降低人工处理成本" in report
+    assert "- 实施需要额外预算" in report
+    assert "- 需确认预算" in report
+
+
 def test_invalid_agent_output_is_rejected():
     try:
         _validate_node_result("benefit_argument", {"summary": "x", "claims": []})

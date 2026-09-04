@@ -330,6 +330,7 @@ def _normalize_report(
     session: ReviewSession | None = None,
     evidence: list[EvidenceItem] | None = None,
     topic: str | None = None,
+    outputs: list[ReviewOutput] | list[dict] | None = None,
 ) -> str:
     sections: dict[str, str] = {}
     current: str | None = None
@@ -347,17 +348,60 @@ def _normalize_report(
         "## 待确认不确定性点": "- 暂无",
         "## 参考证据来源列表": "- 暂无",
     }
+    # A model may return a syntactically valid report with empty placeholders.
+    # Rebuild those sections from persisted stage outputs so a successful
+    # review can never lose its arguments during final report normalization.
+    if outputs:
+        benefits: list[str] = []
+        risks: list[str] = []
+        for output in outputs:
+            role = output.agent_role if isinstance(output, ReviewOutput) else output.get("agent_role")
+            content = output.content_markdown if isinstance(output, ReviewOutput) else output.get("content_markdown")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            if role == "benefit_argument":
+                benefits.append(content.strip())
+            elif role == "risk_argument":
+                risks.append(content.strip())
+        if benefits:
+            fallback["## 收益清单"] = "\n".join(f"- {item}" for item in benefits)
+        if risks:
+            fallback["## 风险与隐患清单"] = "\n".join(f"- {item}" for item in risks)
     # The session topic is the user's source of truth. Do not allow a model
     # fallback such as "未命名评审" to overwrite it in the final report.
     source_topic = topic or (session.topic if session and session.topic else None)
     if source_topic:
         sections["## 方案概述"] = source_topic
     if evidence:
-        fallback["## 待确认不确定性点"] = "\n".join(f"- {item.claim_text}" for item in evidence if item.verdict == "uncertain") or "- 暂无"
+        def evidence_value(item, key: str):
+            return getattr(item, key, None) if isinstance(item, EvidenceItem) else item.get(key)
+
+        fallback["## 待确认不确定性点"] = "\n".join(
+            f"- {evidence_value(item, 'claim_text')}"
+            for item in evidence
+            if evidence_value(item, "verdict") == "uncertain" and evidence_value(item, "claim_text")
+        ) or "- 暂无"
         source_lines = []
+        def source_value(source, key: str):
+            return getattr(source, key, None) if isinstance(source, EvidenceSource) else source.get(key)
+
         for item in evidence:
-            links = ", ".join(f"[{source.title}]({source.url})" for source in item.sources if source.url)
-            source_lines.append(f"- {item.claim_text}（{item.verdict}）" + (f"：{links}" if links else ""))
+            item_sources = evidence_value(item, "sources") or []
+            links = ", ".join(
+                f"[{source_value(source, 'title')}]({source_value(source, 'url')})"
+                for source in item_sources
+                if source_value(source, "url")
+            )
+            source_lines.append(
+                f"- {evidence_value(item, 'claim_text')}（{evidence_value(item, 'verdict')}）"
+                + (f"：{links}" if links else "")
+            )
         fallback["## 参考证据来源列表"] = "\n".join(source_lines) or "- 暂无"
         sections["## 参考证据来源列表"] = fallback["## 参考证据来源列表"]
-    return "\n\n".join(f"{heading}\n{(sections.get(heading) or fallback[heading]).strip()}" for heading in REPORT_HEADINGS)
+    normalized_sections = []
+    for heading in REPORT_HEADINGS:
+        value = (sections.get(heading) or "").strip()
+        if not value or value in {"- 暂无", "暂无"}:
+            value = fallback[heading]
+        normalized_sections.append(f"{heading}\n{value.strip()}")
+    return "\n\n".join(normalized_sections)
