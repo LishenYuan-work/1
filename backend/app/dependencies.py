@@ -51,6 +51,35 @@ async def require_user(user: Profile | GuestUser | None = Depends(get_current_us
     return user
 
 
+async def get_current_guest(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
+    access_cookie: str | None = Cookie(default=None, alias="review_access"),
+) -> GuestUser | None:
+    """Validate a guest token without opening a database session."""
+    raw_token = credentials.credentials if credentials else access_cookie
+    if not raw_token:
+        return None
+    payload = decode_token(raw_token)
+    if payload and payload.get("guest") is True and str(payload.get("sub", "")).startswith("guest:"):
+        return GuestUser(id=str(payload["sub"]))
+    return None
+
+
+async def require_guest(user: GuestUser | None = Depends(get_current_guest)) -> GuestUser:
+    if not isinstance(user, GuestUser):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "请先进入游客体验")
+    return user
+
+
+async def require_authenticated_user(user: Profile | GuestUser | None = Depends(get_current_user)) -> Profile:
+    """Require a persisted profile for organization-scoped APIs."""
+    if not isinstance(user, Profile):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "游客体验不能访问组织评审接口")
+    if not user.email_verified_at:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "请先验证邮箱")
+    return user
+
+
 async def require_organization_member(
     x_organization_id: str = Header(alias="X-Organization-ID"),
     user: Profile = Depends(require_user),

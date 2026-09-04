@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     access_token_minutes: int = 1440
     refresh_token_days: int = 7
     guest_session_minutes: int = 60
+    guest_review_ttl_minutes: int = 90
+    guest_max_reviews_per_session: int = 3
+    guest_max_active_reviews: int = 20
 
     email_provider: str = "console"
     resend_api_key: str = ""

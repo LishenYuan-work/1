@@ -50,6 +50,7 @@ class GuestReview:
     report_markdown: str | None = None
     error_message: str | None = None
     sequence: int = 0
+    events: list[dict[str, Any]] = field(default_factory=list)
 
 
 class GuestReviewStore:
@@ -59,6 +60,14 @@ class GuestReviewStore:
         self._lock = asyncio.Lock()
 
     def create(self, owner_id: str, topic: str | None, max_round: int) -> GuestReview:
+        self.purge_expired()
+        active = [item for item in self.reviews.values() if item.status in {"draft", "queued", "running", "awaiting_human"}]
+        if len(active) >= settings.guest_max_active_reviews:
+            raise RuntimeError("游客体验当前人数较多，请稍后重试")
+        owner_reviews = [item for item in self.reviews.values() if item.owner_id == owner_id]
+        if len(owner_reviews) >= settings.guest_max_reviews_per_session:
+            oldest = min(owner_reviews, key=lambda item: item.updated_at)
+            self._remove(oldest.id)
         review_id = f"guest-{uuid4()}"
         now = _now()
         review = GuestReview(review_id, owner_id, topic, max_round, now, now)
@@ -66,6 +75,7 @@ class GuestReviewStore:
         return review
 
     def get(self, review_id: str, owner_id: str) -> GuestReview:
+        self.purge_expired()
         review = self.reviews.get(review_id)
         if not review or review.owner_id != owner_id:
             raise KeyError(review_id)
@@ -74,10 +84,23 @@ class GuestReviewStore:
     def purge(self, owner_id: str) -> None:
         for review_id, review in list(self.reviews.items()):
             if review.owner_id == owner_id:
-                task = self.tasks.pop(review_id, None)
-                if task and not task.done():
-                    task.cancel()
-                self.reviews.pop(review_id, None)
+                self._remove(review_id)
+
+    def purge_expired(self) -> None:
+        cutoff = time.time() - settings.guest_review_ttl_minutes * 60
+        for review_id, review in list(self.reviews.items()):
+            try:
+                updated = datetime.fromisoformat(review.updated_at).timestamp()
+            except ValueError:
+                updated = 0
+            if updated < cutoff:
+                self._remove(review_id)
+
+    def _remove(self, review_id: str) -> None:
+        task = self.tasks.pop(review_id, None)
+        if task and not task.done():
+            task.cancel()
+        self.reviews.pop(review_id, None)
 
     async def emit(self, review: GuestReview, event_type: str, payload: dict[str, Any]) -> None:
         async with self._lock:
@@ -90,15 +113,17 @@ class GuestReviewStore:
                 "type": event_type,
                 **payload,
             }
+            review.events.append(data)
+            if len(review.events) > 5000:
+                del review.events[:-5000]
         await sse_manager.broadcast(review.id, event_type, data)
 
     async def add_output(self, review: GuestReview, agent: str, round_num: int, content: str, structured_data: dict[str, Any]) -> None:
-        review.sequence += 1
         output = {
-            "id": f"{review.id}-{agent}-{round_num}-{review.sequence}",
+            "id": f"{review.id}-{agent}-{round_num}-{len(review.outputs) + 1}",
             "agent_role": agent,
             "round_num": round_num,
-            "sequence": review.sequence,
+            "sequence": len(review.outputs) + 1,
             "content_markdown": content,
             "structured_data": structured_data,
             "created_at": _now(),
@@ -214,6 +239,10 @@ class GuestReviewStore:
             review.error_message = str(exc)
             await self.emit(review, "error", {"message": "游客评审执行失败，请稍后重试。"})
             await self.emit(review, "done", {"status": "failed"})
+        finally:
+            current = asyncio.current_task()
+            if self.tasks.get(review.id) is current:
+                self.tasks.pop(review.id, None)
 
     async def _fact_check(self, review: GuestReview, round_num: int, argument: dict[str, Any], role: str) -> None:
         claims = [item.get("claim", "") if isinstance(item, dict) else str(item) for item in argument.get("claims", [])]
@@ -237,12 +266,16 @@ class GuestReviewStore:
         risks = [item["content_markdown"] for item in review.outputs if item["agent_role"] == "risk_argument"]
         uncertain = [item["claim_text"] for item in review.evidence if item["verdict"] == "uncertain"]
         bullets = lambda items: "\n".join(f"- {item}" for item in items) if items else "- 暂无"
+        sources = []
+        for item in review.evidence:
+            links = ", ".join(f"[{source['title']}]({source['url']})" for source in item.get("sources", []) if source.get("url"))
+            sources.append(f"- {item['claim_text']}（{item['verdict']}）" + (f"：{links}" if links else ""))
         return "\n\n".join([
             f"{REPORT_HEADINGS[0]}\n{review.topic or '游客示例评审'}",
             f"{REPORT_HEADINGS[1]}\n{bullets(benefits)}",
             f"{REPORT_HEADINGS[2]}\n{bullets(risks)}",
             f"{REPORT_HEADINGS[3]}\n{bullets(uncertain)}",
-            f"{REPORT_HEADINGS[4]}\n- 游客模式不保存外部证据来源。",
+            f"{REPORT_HEADINGS[4]}\n{bullets(sources)}",
         ])
 
 

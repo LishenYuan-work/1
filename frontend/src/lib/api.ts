@@ -210,6 +210,20 @@ export const api = {
     delete: (id: string, org?: string) =>
       request<void>("DELETE", `/api/reviews/${id}`, undefined, org),
   },
+  guestReviews: {
+    create: (body: { topic?: string; max_round: number }) =>
+      request<ReviewSummary>("POST", "/api/guest/reviews", body),
+    get: (id: string) => request<ReviewDetail>("GET", `/api/guest/reviews/${id}`),
+    upload: (id: string, file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      return request<ReviewDocument>("POST", `/api/guest/reviews/${id}/documents`, form);
+    },
+    start: (id: string) => request<ReviewProgress>("POST", `/api/guest/reviews/${id}/start`),
+    evidence: (id: string) => request<EvidenceItem[]>("GET", `/api/guest/reviews/${id}/evidence`),
+    report: (id: string) => request<{ markdown: string }>("GET", `/api/guest/reviews/${id}/report`),
+    downloadUrl: (id: string) => `${BASE}/api/guest/reviews/${id}/report.md`,
+  },
   organizations: {
     invite: (id: string, email: string) =>
       request("POST", `/api/organizations/${id}/invites`, { email }),

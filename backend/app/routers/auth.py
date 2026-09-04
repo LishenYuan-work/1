@@ -303,6 +303,8 @@ async def refresh(response: Response, req: RefreshRequest | None = None, refresh
 @router.post("/logout")
 async def logout(response: Response, user: Profile = Depends(require_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
+        from app.services.guest_review_service import guest_review_store
+        guest_review_store.purge(user.id)
         response.delete_cookie("review_access", path="/")
         response.delete_cookie("review_csrf", path="/")
         return {"status": "logged_out"}

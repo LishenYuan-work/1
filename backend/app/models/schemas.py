@@ -88,6 +88,11 @@ class CreateReviewRequest(BaseModel):
     max_round: int = Field(default=3, ge=1, le=5)
 
 
+class GuestCreateReviewRequest(BaseModel):
+    topic: str | None = Field(default=None, max_length=2000)
+    max_round: int = Field(default=3, ge=1, le=5)
+
+
 class UpdateReviewRequest(BaseModel):
     topic: str | None = Field(default=None, max_length=2000)
     max_round: int | None = Field(default=None, ge=1, le=5)

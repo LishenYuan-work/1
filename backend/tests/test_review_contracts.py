@@ -1,4 +1,10 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
 from app.core.security import create_guest_access_token, create_one_time_token, decode_token, hash_one_time_token
+from app.dependencies import GuestUser, get_current_guest
 from app.models.schemas import CreateReviewRequest
 from app.services.review_service import REPORT_HEADINGS, _coerce_node_result, _normalize_report, _validate_node_result
 from app.runtime.langgraph_runtime import ReviewState, build_review_graph
@@ -35,6 +41,36 @@ def test_guest_review_store_is_owner_scoped_and_not_persistent():
         raise AssertionError("guest reviews must be isolated by owner token")
     store.purge("guest:one")
     assert review.id not in store.reviews
+
+
+@pytest.mark.asyncio
+async def test_guest_events_are_replayable_and_guest_dependency_avoids_database():
+    store = GuestReviewStore()
+    review = store.create("guest:one", "游客测试", 1)
+    await store.emit(review, "session_status", {"status": "running"})
+    assert review.events[0]["sequence"] == 1
+    assert review.events[0]["session_id"] == review.id
+    token = create_guest_access_token("guest:one")
+    user = await get_current_guest(credentials=None, access_cookie=token)
+    assert isinstance(user, GuestUser)
+    assert user.id == "guest:one"
+
+
+def test_guest_review_store_purges_expired_tasks(monkeypatch):
+    store = GuestReviewStore()
+    review = store.create("guest:one", "过期测试", 1)
+    review.updated_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    monkeypatch.setattr(settings, "guest_review_ttl_minutes", 60)
+    store.purge_expired()
+    assert review.id not in store.reviews
+
+
+def test_guest_review_store_limits_active_reviews(monkeypatch):
+    store = GuestReviewStore()
+    monkeypatch.setattr(settings, "guest_max_active_reviews", 1)
+    store.create("guest:one", "第一个", 1)
+    with pytest.raises(RuntimeError):
+        store.create("guest:two", "第二个", 1)
 
 
 def test_review_round_validation_and_report_headings():

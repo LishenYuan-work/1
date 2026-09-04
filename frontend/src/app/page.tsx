@@ -124,10 +124,16 @@ export default function HomePage() {
       setError(message);
     }
     const current = selectedRef.current; const orgId = orgRef.current;
-    if (current && ["done", "error", "report_ready", "session_status", "agent_result"].includes(event.type)) api.reviews.get(current.id, orgId).then((detail) => { selectedRef.current = detail; setSelected(detail); }).catch(() => undefined);
-    if (event.type === "evidence_upsert" && current) api.reviews.evidence(current.id, orgId).then(setEvidence).catch(() => undefined);
-  }, []);
-  const { connect, connected } = useReviewStream(selected?.id || null, onEvent);
+    if (current && ["done", "error", "report_ready", "session_status", "agent_result"].includes(event.type)) {
+      const detailRequest = guest ? api.guestReviews.get(current.id) : api.reviews.get(current.id, orgId);
+      detailRequest.then((detail) => { selectedRef.current = detail; setSelected(detail); }).catch(() => undefined);
+    }
+    if (event.type === "evidence_upsert" && current) {
+      const evidenceRequest = guest ? api.guestReviews.evidence(current.id) : api.reviews.evidence(current.id, orgId);
+      evidenceRequest.then(setEvidence).catch(() => undefined);
+    }
+  }, [guest]);
+  const { connect, connected } = useReviewStream(selected?.id || null, onEvent, guest);
 
   function showView(nextView: ViewKey) { setView(nextView); setMobileMenuOpen(false); setError(""); }
   function loadSample(sample: (typeof sampleMaterials)[number]) { setTopic(sample.topic); setNotice(`已载入示例材料：${sample.title}`); setView("review"); setMobileMenuOpen(false); window.setTimeout(() => setNotice(""), 3200); }
@@ -135,12 +141,12 @@ export default function HomePage() {
   async function createGuestReview() {
     if (!topic.trim() && files.length === 0) { setError("请输入调研主题或选择示例材料"); return; }
     setError(""); setNotice("");
-    const review = await api.reviews.create({ organization_id: "guest", topic: topic.trim() || undefined, max_round: rounds });
-    for (const file of files) await api.reviews.upload(review.id, file);
-    const detail = await api.reviews.get(review.id);
+    const review = await api.guestReviews.create({ topic: topic.trim() || undefined, max_round: rounds });
+    for (const file of files) await api.guestReviews.upload(review.id, file);
+    const detail = await api.guestReviews.get(review.id);
     setSelected(detail); selectedRef.current = detail; setReviews([]); setEvidence([]); setEvents([]); setStreamContent({});
     setTopic(""); setFiles([]); setNotice("游客模式仅在当前页面运行，不会保存评审记录");
-    await api.reviews.start(review.id); connect(review.id);
+    await api.guestReviews.start(review.id); connect(review.id);
   }
 
   async function createReview() {

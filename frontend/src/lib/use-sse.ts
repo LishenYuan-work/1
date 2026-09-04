@@ -5,7 +5,7 @@ import { apiBase, authToken, type ReviewEvent } from "./api";
 
 export type { ReviewEvent } from "./api";
 
-export function useReviewStream(sessionId: string | null, onEvent: (event: ReviewEvent) => void) {
+export function useReviewStream(sessionId: string | null, onEvent: (event: ReviewEvent) => void, guest = false) {
   const [connected, setConnected] = useState(false);
   const last = useRef(0);
   const activeSession = useRef<string | null>(null);
@@ -24,7 +24,8 @@ export function useReviewStream(sessionId: string | null, onEvent: (event: Revie
           const token = authToken();
           const headers: Record<string, string> = { "Last-Event-ID": String(last.current) };
           if (token) headers.Authorization = `Bearer ${token}`;
-          const response = await fetch(`${apiBase()}/api/reviews/${targetSessionId}/stream`, {
+          const prefix = guest ? "/api/guest/reviews" : "/api/reviews";
+          const response = await fetch(`${apiBase()}${prefix}/${targetSessionId}/stream`, {
             headers,
             credentials: "include", signal: controller.signal,
           });
@@ -36,7 +37,9 @@ export function useReviewStream(sessionId: string | null, onEvent: (event: Revie
             buffer += decoder.decode(value, { stream: true }); const chunks = buffer.split("\n\n"); buffer = chunks.pop() || "";
             for (const chunk of chunks) {
               const dataLine = chunk.split("\n").find((line) => line.startsWith("data: ")); if (!dataLine) continue;
-              const event = JSON.parse(dataLine.slice(6)) as ReviewEvent; last.current = event.sequence || last.current; onEvent(event);
+              const event = JSON.parse(dataLine.slice(6)) as ReviewEvent;
+              if (event.sequence && event.sequence <= last.current) continue;
+              last.current = event.sequence || last.current; onEvent(event);
               if (event.type === "done") { finished = true; break; }
             }
             if (finished) return;
@@ -46,8 +49,8 @@ export function useReviewStream(sessionId: string | null, onEvent: (event: Revie
         if (attempt < 6) await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * 2 ** (attempt - 1), 10000)));
       }
     } finally { if (!controller.signal.aborted) setConnected(false); }
-  }, [sessionId, onEvent]);
+  }, [sessionId, onEvent, guest]);
 
-  useEffect(() => () => abort.current?.abort(), [sessionId]);
+  useEffect(() => () => abort.current?.abort(), [sessionId, guest]);
   return { connect, connected };
 }

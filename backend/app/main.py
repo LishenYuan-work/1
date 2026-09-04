@@ -49,6 +49,7 @@ app.add_middleware(CORSMiddleware, allow_origin_regex=settings.cors_origin_regex
 app.include_router(auth.router)
 app.include_router(auth.org_router)
 app.include_router(reviews.router)
+app.include_router(reviews.guest_router)
 
 
 @app.get("/api/health")

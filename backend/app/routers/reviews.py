@@ -18,14 +18,15 @@ from app.core.config import settings
 from app.core.sse_manager import sse_manager
 from app.db.database import async_session, get_db
 from app.db.models import EvidenceItem, OrganizationMember, ReviewDocument, ReviewEvent, ReviewOutput, ReviewReport, ReviewSession
-from app.dependencies import GuestUser, require_user
-from app.models.schemas import EvidenceItemResponse, EvidenceSourceItem, HumanReviewRequest, ReviewDetail, ReviewDocumentItem, ReviewEventItem, ReviewOutputItem, ReviewProgress, ReviewSummary, CreateReviewRequest
+from app.dependencies import GuestUser, require_authenticated_user, require_guest, require_user
+from app.models.schemas import EvidenceItemResponse, EvidenceSourceItem, GuestCreateReviewRequest, HumanReviewRequest, ReviewDetail, ReviewDocumentItem, ReviewEventItem, ReviewOutputItem, ReviewProgress, ReviewSummary, CreateReviewRequest
 from app.services.document_service import extract_document_text
 from app.services.review_service import run_review_background
 from app.services.storage_service import storage_service
 from app.services.guest_review_service import guest_review_store
 
 router = APIRouter(prefix="/api/reviews", tags=["reviews"])
+guest_router = APIRouter(prefix="/api/guest/reviews", tags=["guest-reviews"])
 
 
 def _safe_filename(raw: str) -> str:
@@ -88,7 +89,7 @@ def _summary(s: ReviewSession) -> ReviewSummary:
 
 
 @router.post("", response_model=ReviewSummary, status_code=201)
-async def create_review(req: CreateReviewRequest, background_tasks: BackgroundTasks, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def create_review(req: CreateReviewRequest, background_tasks: BackgroundTasks, user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         review = guest_review_store.create(user.id, req.topic, req.max_round)
         return ReviewSummary(**guest_review_store.summary(review))
@@ -106,7 +107,7 @@ async def create_review(req: CreateReviewRequest, background_tasks: BackgroundTa
 
 
 @router.get("", response_model=list[ReviewSummary])
-async def list_reviews(organization_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def list_reviews(organization_id: str, user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         return []
     await _membership(db, user.id, organization_id)
@@ -115,7 +116,7 @@ async def list_reviews(organization_id: str, user=Depends(require_user), db: Asy
 
 
 @router.get("/{session_id}", response_model=ReviewDetail)
-async def get_review(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def get_review(session_id: str, user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         try:
             return ReviewDetail(**guest_review_store.detail(guest_review_store.get(session_id, user.id)))
@@ -126,7 +127,7 @@ async def get_review(session_id: str, user=Depends(require_user), db: AsyncSessi
 
 
 @router.post("/{session_id}/documents", response_model=ReviewDocumentItem, status_code=201)
-async def upload_document(session_id: str, file: UploadFile = File(...), user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def upload_document(session_id: str, file: UploadFile = File(...), user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         try:
             review = guest_review_store.get(session_id, user.id)
@@ -201,7 +202,7 @@ async def upload_document(session_id: str, file: UploadFile = File(...), user=De
 
 
 @router.post("/{session_id}/start", response_model=ReviewProgress)
-async def start_review(session_id: str, background_tasks: BackgroundTasks, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def start_review(session_id: str, background_tasks: BackgroundTasks, user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         try:
             review = guest_review_store.get(session_id, user.id)
@@ -244,7 +245,7 @@ async def start_review(session_id: str, background_tasks: BackgroundTasks, user=
 
 
 @router.get("/{session_id}/progress", response_model=ReviewProgress)
-async def review_progress(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def review_progress(session_id: str, user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         try:
             review = guest_review_store.get(session_id, user.id)
@@ -256,7 +257,7 @@ async def review_progress(session_id: str, user=Depends(require_user), db: Async
 
 
 @router.post("/{session_id}/human-review", response_model=ReviewProgress)
-async def human_review(session_id: str, req: HumanReviewRequest, background_tasks: BackgroundTasks, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def human_review(session_id: str, req: HumanReviewRequest, background_tasks: BackgroundTasks, user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         raise HTTPException(409, "游客体验不支持人工复核，请登录后使用")
     session = await _session(db, user.id, session_id)
@@ -279,7 +280,7 @@ async def human_review(session_id: str, req: HumanReviewRequest, background_task
 
 
 @router.get("/{session_id}/events", response_model=list[ReviewEventItem])
-async def review_events(session_id: str, after: int = 0, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def review_events(session_id: str, after: int = 0, user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         try:
             review = guest_review_store.get(session_id, user.id)
@@ -292,7 +293,7 @@ async def review_events(session_id: str, after: int = 0, user=Depends(require_us
 
 
 @router.get("/{session_id}/stream")
-async def stream_review(session_id: str, last_event_id: int = Header(default=0, alias="Last-Event-ID"), user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def stream_review(session_id: str, last_event_id: int = Header(default=0, alias="Last-Event-ID"), user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         try:
             guest_review_store.get(session_id, user.id)
@@ -300,10 +301,28 @@ async def stream_review(session_id: str, last_event_id: int = Header(default=0, 
             raise HTTPException(404, "评审任务不存在") from exc
         async def guest_generator():
             queue = await sse_manager.subscribe(session_id, last_event_id)
+            delivered = last_event_id
             try:
+                # The broadcast manager may drop its transient log as soon as
+                # a completed task has no subscribers. Keep replay available
+                # from the guest task itself so a late browser connection can
+                # still receive the report and terminal event.
+                review = guest_review_store.get(session_id, user.id)
+                for event in review.events:
+                    sequence = int(event.get("sequence", 0))
+                    if sequence <= delivered:
+                        continue
+                    delivered = sequence
+                    yield f"id: {sequence}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    if event["type"] == "done":
+                        return
                 while True:
                     try:
                         raw = await asyncio.wait_for(queue.get(), timeout=25)
+                        event_id = next((line[4:] for line in raw.splitlines() if line.startswith("id: ")), "0")
+                        if int(event_id or 0) <= delivered:
+                            continue
+                        delivered = int(event_id)
                         yield raw
                         if "event: done" in raw:
                             break
@@ -334,7 +353,7 @@ async def stream_review(session_id: str, last_event_id: int = Header(default=0, 
 
 
 @router.get("/{session_id}/evidence", response_model=list[EvidenceItemResponse])
-async def review_evidence(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def review_evidence(session_id: str, user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         try:
             return [EvidenceItemResponse(**item) for item in guest_review_store.get(session_id, user.id).evidence]
@@ -346,7 +365,7 @@ async def review_evidence(session_id: str, user=Depends(require_user), db: Async
 
 
 @router.get("/{session_id}/report")
-async def get_report(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def get_report(session_id: str, user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         try:
             review = guest_review_store.get(session_id, user.id)
@@ -362,7 +381,7 @@ async def get_report(session_id: str, user=Depends(require_user), db: AsyncSessi
 
 
 @router.get("/{session_id}/report.md")
-async def download_report(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def download_report(session_id: str, user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         try:
             review = guest_review_store.get(session_id, user.id)
@@ -378,7 +397,7 @@ async def download_report(session_id: str, user=Depends(require_user), db: Async
 
 
 @router.delete("/{session_id}", status_code=204)
-async def delete_review(session_id: str, user=Depends(require_user), db: AsyncSession = Depends(get_db)):
+async def delete_review(session_id: str, user=Depends(require_authenticated_user), db: AsyncSession = Depends(get_db)):
     if isinstance(user, GuestUser):
         try:
             guest_review_store.get(session_id, user.id)
@@ -405,3 +424,63 @@ async def delete_review(session_id: str, user=Depends(require_user), db: AsyncSe
             raise HTTPException(502, f"原文件删除失败，请稍后重试: {exc}") from exc
     await db.delete(session)
     await db.commit()
+    return Response(status_code=204)
+
+
+# Explicit guest paths keep the public contract separate from organization
+# reviews. They delegate to the same handlers, but never inject a database
+# session, so a guest request cannot accidentally create persistent records.
+@guest_router.post("", response_model=ReviewSummary, status_code=201)
+async def create_guest_review(req: GuestCreateReviewRequest, background_tasks: BackgroundTasks, user: GuestUser = Depends(require_guest)):
+    if req.topic is not None and not req.topic.strip():
+        raise HTTPException(400, "调研主题不能为空")
+    try:
+        review = guest_review_store.create(user.id, req.topic.strip() if req.topic else None, req.max_round)
+    except RuntimeError as exc:
+        raise HTTPException(429, str(exc)) from exc
+    return ReviewSummary(**guest_review_store.summary(review))
+
+
+@guest_router.get("/{session_id}", response_model=ReviewDetail)
+async def get_guest_review(session_id: str, user: GuestUser = Depends(require_guest)):
+    return await get_review(session_id, user=user, db=None)
+
+
+@guest_router.post("/{session_id}/documents", response_model=ReviewDocumentItem, status_code=201)
+async def upload_guest_document(session_id: str, file: UploadFile = File(...), user: GuestUser = Depends(require_guest)):
+    return await upload_document(session_id, file=file, user=user, db=None)
+
+
+@guest_router.post("/{session_id}/start", response_model=ReviewProgress)
+async def start_guest_review(session_id: str, background_tasks: BackgroundTasks, user: GuestUser = Depends(require_guest)):
+    return await start_review(session_id, background_tasks=background_tasks, user=user, db=None)
+
+
+@guest_router.get("/{session_id}/progress", response_model=ReviewProgress)
+async def guest_review_progress(session_id: str, user: GuestUser = Depends(require_guest)):
+    return await review_progress(session_id, user=user, db=None)
+
+
+@guest_router.get("/{session_id}/stream")
+async def stream_guest_review(session_id: str, last_event_id: int = Header(default=0, alias="Last-Event-ID"), user: GuestUser = Depends(require_guest)):
+    return await stream_review(session_id, last_event_id=last_event_id, user=user, db=None)
+
+
+@guest_router.get("/{session_id}/evidence", response_model=list[EvidenceItemResponse])
+async def guest_review_evidence(session_id: str, user: GuestUser = Depends(require_guest)):
+    return await review_evidence(session_id, user=user, db=None)
+
+
+@guest_router.get("/{session_id}/report")
+async def guest_review_report(session_id: str, user: GuestUser = Depends(require_guest)):
+    return await get_report(session_id, user=user, db=None)
+
+
+@guest_router.get("/{session_id}/report.md")
+async def download_guest_report(session_id: str, user: GuestUser = Depends(require_guest)):
+    return await download_report(session_id, user=user, db=None)
+
+
+@guest_router.delete("/{session_id}", status_code=204)
+async def delete_guest_review(session_id: str, user: GuestUser = Depends(require_guest)):
+    return await delete_review(session_id, user=user, db=None)
